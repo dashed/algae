@@ -322,9 +322,6 @@ pub fn effect(item: TokenStream) -> TokenStream {
     let mut op_variants = TokenStream2::new();
     let mut impl_froms = TokenStream2::new();
 
-    // Note: We used to use first_family for Default impl generation,
-    // but that's been removed to avoid requiring Default bounds
-
     for (_fam_name_str, (family_ident, variants)) in families {
         // each variant
         let mut variant_tokens = TokenStream2::new();
@@ -355,10 +352,6 @@ pub fn effect(item: TokenStream) -> TokenStream {
     }
 
     // ── 3.  Root enum (configurable name) ────────────────────────────────────
-
-    // For Default implementation, we need to pick the first family and first variant
-    // Note: Default implementations removed to avoid requiring Default bounds
-    // on payload types. Users can implement Default manually if needed.
 
     let output = quote! {
         // Sentry enum to detect duplicate root names in same module
