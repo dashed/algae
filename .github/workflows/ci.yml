@@ -1,0 +1,131 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test Suite
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust nightly
+      uses: dtolnay/rust-toolchain@nightly
+      with:
+        components: rustfmt, clippy
+
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Run tests
+      run: |
+        # Run library tests only (excludes examples that may fail intentionally)
+        cargo test --lib --verbose
+        # Also test the macro crate specifically  
+        cargo test -p algae-macros --verbose
+
+    - name: Check working examples compile
+      run: |
+        # Test that the main working examples compile successfully
+        cargo check --example multiple_effects_demo
+        cargo check --example custom_root_effects  
+        cargo check --example test_error_messages
+        cargo check --example console
+        cargo check --example minimal
+        cargo check --example overview
+
+    - name: Verify error detection works
+      run: |
+        # Verify that the intentional error example fails as expected
+        # We expect this to fail, so invert the exit code
+        if cargo check --example duplicate_root_test; then
+          echo "ERROR: duplicate_root_test should fail to compile but succeeded"
+          exit 1
+        else
+          echo "SUCCESS: duplicate_root_test correctly failed to compile"
+        fi
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust nightly
+      uses: dtolnay/rust-toolchain@nightly
+      with:
+        components: clippy
+
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Run clippy
+      run: |
+        # Run clippy on the library code (excluding examples that intentionally fail)
+        cargo clippy --lib --all-targets --all-features -- -D warnings
+        # Run clippy on working examples (allow warnings since they're for demonstration)
+        cargo clippy --example multiple_effects_demo
+        cargo clippy --example custom_root_effects  
+        cargo clippy --example test_error_messages
+        cargo clippy --example console
+        cargo clippy --example minimal
+        cargo clippy --example overview
+
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust nightly
+      uses: dtolnay/rust-toolchain@nightly
+      with:
+        components: rustfmt
+
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+
+  docs:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust nightly
+      uses: dtolnay/rust-toolchain@nightly
+
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target/
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+    - name: Check documentation builds
+      run: cargo doc --no-deps --all-features
+
+    - name: Check for broken doc links
+      run: cargo doc --no-deps --all-features
+      env:
+        RUSTDOCFLAGS: "-D warnings"

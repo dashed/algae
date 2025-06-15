@@ -129,6 +129,7 @@ impl MockHandler {
         }
     }
 
+    #[allow(dead_code)]
     fn get_outputs(&self) -> &[String] {
         &self.console_outputs
     }
@@ -207,7 +208,7 @@ fn main() {
     let convenient_fn = calculate_convenient; // This also has type fn(i32, i32) -> Effectful<String, Op>
 
     // We can use them interchangeably
-    let functions: Vec<fn(i32, i32) -> Effectful<String, Op>> =
+    let _functions: Vec<fn(i32, i32) -> Effectful<String, Op>> =
         vec![calculate_explicit, convenient_fn];
 
     println!("✅ Both functions have identical type signatures!");
