@@ -294,7 +294,7 @@ pub fn effect(item: TokenStream) -> TokenStream {
     let root_ident = root_ident.unwrap_or_else(|| Ident::new("Op", proc_macro2::Span::call_site()));
     
     // Generate sentry enum to catch duplicate root names
-    let sentry_name = format!("__ALGAE_EFFECT_SENTRY_FOR_{}", root_ident);
+    let sentry_name = format!("__ALGAE_EFFECT_SENTRY_FOR_{root_ident}");
     let sentry_ident = Ident::new(&sentry_name, proc_macro2::Span::call_site());
 
     // ── 1.  Group lines by family ────────────────────────────────────────────
