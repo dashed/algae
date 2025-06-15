@@ -3,5 +3,46 @@ name = "algae"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["macros"]
+macros = ["algae-macros"]
+
 [dependencies]
-algae-macros = { path = "../algae-macros" }
+algae-macros = { path = "../algae-macros", optional = true }
+
+# Examples that require macros
+[[example]]
+name = "console"
+required-features = ["macros"]
+
+[[example]]
+name = "debug"
+required-features = ["macros"]
+
+[[example]]
+name = "effect_test"
+required-features = ["macros"]
+
+[[example]]
+name = "pure"
+required-features = ["macros"]
+
+[[example]]
+name = "advanced"
+required-features = ["macros"]
+
+[[example]]
+name = "overview"
+required-features = ["macros"]
+
+[[example]]
+name = "readme"
+required-features = ["macros"]
+
+[[example]]
+name = "theory"
+required-features = ["macros"]
+
+[[example]]
+name = "minimal"
+required-features = ["macros"]

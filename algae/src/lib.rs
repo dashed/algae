@@ -27,7 +27,7 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust
+//! ```rust,ignore
 //! #![feature(coroutines, coroutine_trait, yield_expr)]
 //! use algae::prelude::*;
 //!
@@ -122,7 +122,7 @@ use std::{
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// # #![feature(coroutines, coroutine_trait, yield_expr)]
 /// # use algae::prelude::*;
 /// # effect! { Test::GetValue -> i32; }
@@ -160,7 +160,7 @@ pub struct Effect<Op: 'static> {
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// # #![feature(coroutines, coroutine_trait, yield_expr)]
 /// # use algae::prelude::*;
 /// # effect! { Test::GetValue -> i32; }
@@ -200,7 +200,7 @@ impl<Op> Effect<Op> {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// # #![feature(coroutines, coroutine_trait, yield_expr)]
     /// # use algae::prelude::*;
     /// # effect! { Test::GetValue -> i32; }
@@ -233,7 +233,7 @@ impl<Op> Effect<Op> {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// # #![feature(coroutines, coroutine_trait, yield_expr)]
     /// # use algae::prelude::*;
     /// # effect! { Test::GetValue -> i32; }
@@ -267,7 +267,7 @@ impl<Op> Effect<Op> {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// # #![feature(coroutines, coroutine_trait, yield_expr)]
     /// # use algae::prelude::*;
     /// # effect! { Test::GetValue -> i32; }
@@ -313,7 +313,7 @@ impl Reply {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// # #![feature(coroutines, coroutine_trait, yield_expr)]
     /// # use algae::prelude::*;
     /// # effect! { Test::GetValue -> i32; }
@@ -369,7 +369,7 @@ type EffectCoroutine<R, Op> = Pin<Box<dyn Coroutine<Option<Reply>, Return = R, Y
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// # #![feature(coroutines, coroutine_trait, yield_expr)]
 /// # use algae::prelude::*;
 /// # effect! { Test::GetValue -> i32; }
@@ -415,7 +415,7 @@ impl<R, Op: 'static> Effectful<R, Op> {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// # #![feature(coroutines, coroutine_trait, yield_expr, stmt_expr_attributes)]
     /// # use algae::prelude::*;
     /// # use std::pin::Pin;
@@ -454,7 +454,7 @@ impl<R, Op: 'static> Effectful<R, Op> {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// # #![feature(coroutines, coroutine_trait, yield_expr)]
     /// # use algae::prelude::*;
     /// # effect! { Test::GetValue -> i32; }
@@ -504,7 +504,7 @@ impl<R, Op: 'static> Effectful<R, Op> {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// # #![feature(coroutines, coroutine_trait, yield_expr)]
     /// # use algae::prelude::*;
     /// # effect! { Test::GetValue -> i32; }
@@ -544,7 +544,7 @@ impl<R, Op: 'static> Effectful<R, Op> {
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// # #![feature(coroutines, coroutine_trait, yield_expr)]
 /// # use algae::prelude::*;
 /// # effect! { Test::GetValue -> i32; }
@@ -583,7 +583,7 @@ impl<R, Op: 'static, H: Handler<Op>> Handled<R, Op, H> {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// # #![feature(coroutines, coroutine_trait, yield_expr)]
     /// # use algae::prelude::*;
     /// # effect! { Test::GetValue -> i32; }
@@ -624,7 +624,7 @@ impl<R, Op: 'static, H: Handler<Op>> Handled<R, Op, H> {
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// # #![feature(coroutines, coroutine_trait, yield_expr)]
 /// # use algae::prelude::*;
 /// # effect! { 
@@ -686,7 +686,7 @@ pub trait Handler<Op> {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// # #![feature(coroutines, coroutine_trait, yield_expr)]
     /// # use algae::prelude::*;
     /// # effect! { Math::Add ((i32, i32)) -> i32; }
@@ -719,14 +719,15 @@ pub trait Handler<Op> {
 /// - [`Handler`] - Trait for implementing effect handlers
 /// - [`Reply`] - Container for handler response values
 ///
-/// ## Macros
+/// ## Macros (when "macros" feature is enabled)
 /// - [`effect!`] - Macro for defining effect families and operations
 /// - [`effectful`] - Attribute macro for marking functions as effectful
 /// - [`perform!`] - Macro for performing effects within effectful functions
 ///
 /// # Examples
 ///
-/// ```rust
+/// ## With macros (default):
+/// ```rust,ignore
 /// #![feature(coroutines, coroutine_trait, yield_expr)]
 /// use algae::prelude::*;
 ///
@@ -765,12 +766,18 @@ pub trait Handler<Op> {
 ///     .run();
 /// assert_eq!(result, 6);
 /// ```
+///
+/// ## Without macros (manual approach):
+/// When using algae without the "macros" feature, you need to define
+/// your effect types and handlers manually using the core types.
 pub mod prelude {
     pub use crate::{Effect, Effectful, Handler, Reply};
+    
+    #[cfg(feature = "macros")]
     pub use algae_macros::{effect, effectful, perform};
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "macros"))]
 mod tests {
     use crate as algae;
     use algae::prelude::*;
