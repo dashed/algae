@@ -1,6 +1,3 @@
-[package]
-name = "algae"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
+[workspace]
+members = ["algae", "algae-macros"]
+resolver = "2"
