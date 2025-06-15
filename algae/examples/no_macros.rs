@@ -13,16 +13,11 @@ use algae::prelude::*;
 use std::any::Any;
 
 // Manually define effect operations (equivalent to what effect! macro generates)
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub enum Console {
     Print(String),
+    #[default]
     ReadLine,
-}
-
-impl Default for Console {
-    fn default() -> Self {
-        Console::ReadLine
-    }
 }
 
 #[derive(Debug)]
@@ -61,7 +56,7 @@ impl Handler<Op> for MockConsole {
     fn handle(&mut self, op: &Op) -> Box<dyn Any + Send> {
         match op {
             Op::Console(Console::Print(msg)) => {
-                println!("[MOCK] {}", msg);
+                println!("[MOCK] {msg}");
                 Box::new(())
             }
             Op::Console(Console::ReadLine) => {
@@ -97,7 +92,7 @@ fn greet_user() -> Effectful<String, Op> {
                 __reply_opt.unwrap().take::<String>()
             };
 
-            format!("Hello, {}!", name)
+            format!("Hello, {name}!")
         },
     )
 }
@@ -109,7 +104,7 @@ fn main() {
     let handler = MockConsole::new(vec!["Alice".to_string()]);
     let result = greet_user().handle(handler).run();
 
-    println!("Result: {}", result);
+    println!("Result: {result}");
     println!("\nAs you can see, the core functionality works without macros,");
     println!("but the syntax is much more verbose!");
 }

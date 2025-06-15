@@ -12,7 +12,7 @@ effect! {
 fn greet_user() -> String {
     let _: () = perform!(Console::Print("What's your name?".to_string()));
     let name: String = perform!(Console::ReadLine);
-    format!("Hello, {}!", name)
+    format!("Hello, {name}!")
 }
 
 // 3. Implement handlers
@@ -22,7 +22,7 @@ impl Handler<Op> for RealConsoleHandler {
     fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
         match op {
             Op::Console(Console::Print(msg)) => {
-                println!("{}", msg);
+                println!("{msg}");
                 Box::new(())
             }
             Op::Console(Console::ReadLine) => {
@@ -53,7 +53,7 @@ impl Handler<Op> for MockConsoleHandler {
     fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
         match op {
             Op::Console(Console::Print(msg)) => {
-                println!("[MOCK] {}", msg);
+                println!("[MOCK] {msg}");
                 Box::new(())
             }
             Op::Console(Console::ReadLine) => {
@@ -78,7 +78,7 @@ fn main() {
     // Production: use real I/O
     let result = greet_user().handle(RealConsoleHandler).run();
 
-    println!("Result: {}", result);
+    println!("Result: {result}");
 
     println!("\n=== Testing Example (Mock I/O) ===");
 
@@ -86,7 +86,7 @@ fn main() {
     let mock_handler = MockConsoleHandler::new(vec!["Alice".to_string()]);
     let mock_result = greet_user().handle(mock_handler).run();
 
-    println!("Mock Result: {}", mock_result);
+    println!("Mock Result: {mock_result}");
     assert_eq!(mock_result, "Hello, Alice!");
 
     println!("\nBoth examples completed successfully!");

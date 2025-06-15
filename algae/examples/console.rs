@@ -96,9 +96,9 @@ impl Handler<Op> for Rand {
 #[effectful]
 fn program() -> i32 {
     let name: String = perform!(Console::ReadLine);
-    let _: () = perform!(Console::Print(format!("Hello, {}!", name)));
+    let _: () = perform!(Console::Print(format!("Hello, {name}!")));
     let lucky: i32 = perform!(Random::Int(1..10));
-    let _: () = perform!(Console::Print(format!("Your lucky number is {}", lucky)));
+    let _: () = perform!(Console::Print(format!("Your lucky number is {lucky}")));
     lucky
 }
 

@@ -64,7 +64,7 @@ fn console_demo() -> algae::Effectful<String, ConsoleOp> {
                 reply_opt.unwrap().take::<String>()
             };
 
-            format!("Hello, {}!", name)
+            format!("Hello, {name}!")
         },
     )
 }
@@ -113,7 +113,7 @@ fn file_demo(filename: String) -> algae::Effectful<String, FileOp> {
                         let effect = algae::Effect::new(
                             File::Write((
                                 "error.log".to_string(),
-                                format!("Failed to read {}: {}", filename, error),
+                                format!("Failed to read {filename}: {error}"),
                             ))
                             .into(),
                         );
@@ -150,7 +150,7 @@ impl algae::Handler<ConsoleOp> for ConsoleHandler {
     fn handle(&mut self, op: &ConsoleOp) -> Box<dyn std::any::Any + Send> {
         match op {
             ConsoleOp::Console(Console::Print(msg)) => {
-                println!("[CONSOLE] {}", msg);
+                println!("[CONSOLE] {msg}");
                 Box::new(())
             }
             ConsoleOp::Console(Console::ReadLine) => {
@@ -161,7 +161,7 @@ impl algae::Handler<ConsoleOp> for ConsoleHandler {
                     .cloned()
                     .unwrap_or_else(|| "default".to_string());
                 *index += 1;
-                println!("[CONSOLE] <input: {}>", response);
+                println!("[CONSOLE] <input: {response}>");
                 Box::new(response)
             }
             ConsoleOp::Console(Console::Clear) => {
@@ -179,12 +179,12 @@ impl algae::Handler<MathOp> for MathHandler {
         match op {
             MathOp::Math(Math::Add((a, b))) => {
                 let result = a + b;
-                println!("[MATH] {} + {} = {}", a, b, result);
+                println!("[MATH] {a} + {b} = {result}");
                 Box::new(result)
             }
             MathOp::Math(Math::Multiply((a, b))) => {
                 let result = a * b;
-                println!("[MATH] {} * {} = {}", a, b, result);
+                println!("[MATH] {a} * {b} = {result}");
                 Box::new(result)
             }
             MathOp::Math(Math::Divide((a, b))) => {
@@ -192,7 +192,7 @@ impl algae::Handler<MathOp> for MathHandler {
                     Box::new(Err::<i32, String>("Division by zero".to_string()))
                 } else {
                     let result = a / b;
-                    println!("[MATH] {} / {} = {}", a, b, result);
+                    println!("[MATH] {a} / {b} = {result}");
                     Box::new(Ok::<i32, String>(result))
                 }
             }
@@ -219,16 +219,16 @@ impl algae::Handler<FileOp> for FileHandler {
         match op {
             FileOp::File(File::Read(path)) => {
                 if let Some(content) = self.files.get(path) {
-                    println!("[FILE] Reading {}: {}", path, content);
+                    println!("[FILE] Reading {path}: {content}");
                     Box::new(Ok::<String, String>(content.clone()))
                 } else {
-                    println!("[FILE] File not found: {}", path);
-                    Box::new(Err::<String, String>(format!("File not found: {}", path)))
+                    println!("[FILE] File not found: {path}");
+                    Box::new(Err::<String, String>(format!("File not found: {path}")))
                 }
             }
             FileOp::File(File::Write((path, content))) => {
                 self.files.insert(path.clone(), content.clone());
-                println!("[FILE] Writing to {}: {}", path, content);
+                println!("[FILE] Writing to {path}: {content}");
                 Box::new(Ok::<(), String>(()))
             }
         }
@@ -299,7 +299,7 @@ fn console_demo_unified() -> algae::Effectful<String, UnifiedOp> {
                 reply_opt.unwrap().take::<String>()
             };
 
-            format!("Hello, {}!", name)
+            format!("Hello, {name}!")
         },
     )
 }
@@ -317,23 +317,23 @@ fn main() {
     let console_result = console_demo()
         .handle(ConsoleHandler::new(vec!["Alice".to_string()]))
         .run();
-    println!("Console result: {}\n", console_result);
+    println!("Console result: {console_result}\n");
 
     // Math demo
     let math_result = math_demo(10, 5).handle(MathHandler).run();
-    println!("Math result: {}\n", math_result);
+    println!("Math result: {math_result}\n");
 
     // File demo
     let file_result = file_demo("test.txt".to_string())
         .handle(FileHandler::new())
         .run();
-    println!("File result: {}\n", file_result);
+    println!("File result: {file_result}\n");
 
     println!("2. Unified handler using combine_roots! macro:");
 
     // Unified demo
     let unified_result = console_demo_unified().handle(UnifiedHandler::new()).run();
-    println!("Unified result: {}\n", unified_result);
+    println!("Unified result: {unified_result}\n");
 
     println!("=== Key Benefits ===");
     println!("✅ Multiple effect! macros in same module without conflicts");

@@ -85,7 +85,7 @@ impl Handler<Op> for CombinedHandler {
 fn complex_computation(a: i32, b: i32) -> i32 {
     // Effect Operation: Invokes an effect operation
     let sum: i32 = perform!(Math::Add((a, b)));
-    println!("Sum: {}", sum);
+    println!("Sum: {sum}");
 
     // Store the result in counter
     let _: () = perform!(Counter::Set(sum));
@@ -95,11 +95,11 @@ fn complex_computation(a: i32, b: i32) -> i32 {
 
     // Get the final value
     let counter_value: i32 = perform!(Counter::Get);
-    println!("Counter after increment: {}", counter_value);
+    println!("Counter after increment: {counter_value}");
 
     // Multiply by 2
     let result: i32 = perform!(Math::Multiply((counter_value, 2)));
-    println!("Final result: {}", result);
+    println!("Final result: {result}");
 
     result
 }
@@ -136,7 +136,7 @@ fn demonstrate_theory() {
         .handle(CombinedHandler::new(0)) // Install the handler
         .run(); // Execute the computation
 
-    println!("\nFinal computation result: {}", result);
+    println!("\nFinal computation result: {result}");
 
     // Demonstrate different handlers
     println!("\n--- Same computation, different handler ---");
@@ -144,7 +144,7 @@ fn demonstrate_theory() {
         .handle(CombinedHandler::new(100)) // Different initial state
         .run();
 
-    println!("With different initial state: {}", result2);
+    println!("With different initial state: {result2}");
 }
 
 // Demonstrate algebraic laws
@@ -187,14 +187,15 @@ fn demonstrate_algebraic_laws() {
         .run();
 
     println!("Distributivity law: 2 * (3 + 4) = 2 * 3 + 2 * 4");
-    println!("Left side:  {} (should be 14)", left);
-    println!("Right side: {} (should be 14)", right);
-    println!("Law holds: {}", left == right);
+    println!("Left side:  {left} (should be 14)");
+    println!("Right side: {right} (should be 14)");
+    let holds = left == right;
+    println!("Law holds: {holds}");
 
     // Demonstrate associativity with different computations
     let assoc_result = demonstrate_associativity().handle(MathHandler).run();
 
-    println!("\nAssociativity: (2 + 3) * 4 = {}", assoc_result);
+    println!("\nAssociativity: (2 + 3) * 4 = {assoc_result}");
 }
 
 fn main() {

@@ -26,7 +26,7 @@ fn calculate_explicit(x: i32, y: i32) -> Effectful<String, Op> {
             // Print start message
             {
                 let effect =
-                    Effect::new(Console::Print(format!("Calculating {} * ({} + 5)", x, y)).into());
+                    Effect::new(Console::Print(format!("Calculating {x} * ({y} + 5)")).into());
                 let reply_opt = yield effect;
                 let _: () = reply_opt.unwrap().take::<()>();
             }
@@ -47,12 +47,12 @@ fn calculate_explicit(x: i32, y: i32) -> Effectful<String, Op> {
 
             // Print result
             {
-                let effect = Effect::new(Console::Print(format!("Result: {}", result)).into());
+                let effect = Effect::new(Console::Print(format!("Result: {result}")).into());
                 let reply_opt = yield effect;
                 let _: () = reply_opt.unwrap().take::<()>();
             }
 
-            format!("Final answer: {}", result)
+            format!("Final answer: {result}")
         },
     )
 }
@@ -79,12 +79,12 @@ fn greet_user_explicit() -> Effectful<String, Op> {
             // Print greeting
             {
                 let effect =
-                    Effect::new(Console::Print(format!("Nice to meet you, {}!", name)).into());
+                    Effect::new(Console::Print(format!("Nice to meet you, {name}!")).into());
                 let reply_opt = yield effect;
                 let _: () = reply_opt.unwrap().take::<()>();
             }
 
-            format!("User: {}", name)
+            format!("User: {name}")
         },
     )
 }
@@ -96,11 +96,11 @@ fn greet_user_explicit() -> Effectful<String, Op> {
 /// Convenient function using macros - identical behavior to calculate_explicit
 #[effectful]
 fn calculate_convenient(x: i32, y: i32) -> String {
-    let _: () = perform!(Console::Print(format!("Calculating {} * ({} + 5)", x, y)));
+    let _: () = perform!(Console::Print(format!("Calculating {x} * ({y} + 5)")));
     let y_plus_5: i32 = perform!(Math::Add((y, 5)));
     let result: i32 = perform!(Math::Multiply((x, y_plus_5)));
-    let _: () = perform!(Console::Print(format!("Result: {}", result)));
-    format!("Final answer: {}", result)
+    let _: () = perform!(Console::Print(format!("Result: {result}")));
+    format!("Final answer: {result}")
 }
 
 /// Convenient function using macros - identical behavior to greet_user_explicit
@@ -108,8 +108,8 @@ fn calculate_convenient(x: i32, y: i32) -> String {
 fn greet_user_convenient() -> String {
     let _: () = perform!(Console::Print("What's your name?".to_string()));
     let name: String = perform!(Console::ReadLine);
-    let _: () = perform!(Console::Print(format!("Nice to meet you, {}!", name)));
-    format!("User: {}", name)
+    let _: () = perform!(Console::Print(format!("Nice to meet you, {name}!")));
+    format!("User: {name}")
 }
 
 // ============================================================================
@@ -139,22 +139,23 @@ impl Handler<Op> for MockHandler {
     fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
         match op {
             Op::Console(Console::Print(msg)) => {
-                println!("[MOCK CONSOLE] {}", msg);
+                println!("[MOCK CONSOLE] {msg}");
                 self.console_outputs.push(msg.clone());
                 Box::new(())
             }
             Op::Console(Console::ReadLine) => {
-                println!("[MOCK CONSOLE] <reading: {}>", self.console_input);
+                let input = &self.console_input;
+                println!("[MOCK CONSOLE] <reading: {input}>");
                 Box::new(self.console_input.clone())
             }
             Op::Math(Math::Add((a, b))) => {
                 let result = a + b;
-                println!("[MOCK MATH] {} + {} = {}", a, b, result);
+                println!("[MOCK MATH] {a} + {b} = {result}");
                 Box::new(result)
             }
             Op::Math(Math::Multiply((a, b))) => {
                 let result = a * b;
-                println!("[MOCK MATH] {} * {} = {}", a, b, result);
+                println!("[MOCK MATH] {a} * {b} = {result}");
                 Box::new(result)
             }
         }
@@ -172,12 +173,12 @@ fn main() {
     println!("1. Math calculation example:");
 
     let result_explicit = calculate_explicit(3, 7).handle(MockHandler::new("")).run();
-    println!("Explicit result: {}\n", result_explicit);
+    println!("Explicit result: {result_explicit}\n");
 
     let result_convenient = calculate_convenient(3, 7)
         .handle(MockHandler::new(""))
         .run();
-    println!("Convenient result: {}\n", result_convenient);
+    println!("Convenient result: {result_convenient}\n");
 
     // Verify they're identical
     assert_eq!(result_explicit, result_convenient);
@@ -189,12 +190,12 @@ fn main() {
     let user_explicit = greet_user_explicit()
         .handle(MockHandler::new("Alice"))
         .run();
-    println!("Explicit result: {}\n", user_explicit);
+    println!("Explicit result: {user_explicit}\n");
 
     let user_convenient = greet_user_convenient()
         .handle(MockHandler::new("Alice"))
         .run();
-    println!("Convenient result: {}\n", user_convenient);
+    println!("Convenient result: {user_convenient}\n");
 
     // Verify they're identical
     assert_eq!(user_explicit, user_convenient);
@@ -208,8 +209,8 @@ fn main() {
     let convenient_fn = calculate_convenient; // This also has type fn(i32, i32) -> Effectful<String, Op>
 
     // We can use them interchangeably
-    let _functions: Vec<fn(i32, i32) -> Effectful<String, Op>> =
-        vec![calculate_explicit, convenient_fn];
+    type CalculateFunction = fn(i32, i32) -> Effectful<String, Op>;
+    let _functions: Vec<CalculateFunction> = vec![calculate_explicit, convenient_fn];
 
     println!("✅ Both functions have identical type signatures!");
     println!("✅ Both functions can be stored in the same collection!");

@@ -51,7 +51,7 @@ fn comprehensive_demo() -> String {
     let product: i32 = perform!(Math::Multiply((sum, 2)));
 
     // File operations
-    let content = format!("User: {}, Calculation: {}", name, product);
+    let content = format!("User: {name}, Calculation: {product}");
     let _: Result<(), String> = perform!(File::Write(("demo.txt".to_string(), content.clone())));
 
     // Network request (simulated)
@@ -59,7 +59,7 @@ fn comprehensive_demo() -> String {
 
     let _: () = perform!(Logger::Info("Demo completed successfully".to_string()));
 
-    format!("Demo result: {} calculated {}", name, product)
+    format!("Demo result: {name} calculated {product}")
 }
 
 // ============================================================================
@@ -128,7 +128,7 @@ fn console_demo_v2() -> algae::Effectful<String, ConsoleOp> {
                 reply_opt.unwrap().take::<String>()
             };
 
-            format!("Hello from v2, {}!", name)
+            format!("Hello from v2, {name}!")
         },
     )
 }
@@ -251,7 +251,7 @@ impl algae::Handler<ConsoleOp> for ConsoleHandler {
     fn handle(&mut self, op: &ConsoleOp) -> Box<dyn std::any::Any + Send> {
         match op {
             ConsoleOp::ConsoleV2(ConsoleV2::Print(msg)) => {
-                println!("[CUSTOM CONSOLE] {}", msg);
+                println!("[CUSTOM CONSOLE] {msg}");
                 Box::new(())
             }
             ConsoleOp::ConsoleV2(ConsoleV2::ReadLine) => {
@@ -261,7 +261,7 @@ impl algae::Handler<ConsoleOp> for ConsoleHandler {
                     "default".to_string()
                 };
                 self.index += 1;
-                println!("[CUSTOM CONSOLE] <input: {}>", response);
+                println!("[CUSTOM CONSOLE] <input: {response}>");
                 Box::new(response)
             }
             ConsoleOp::ConsoleV2(ConsoleV2::Clear) => {
@@ -279,12 +279,12 @@ impl algae::Handler<MathOp> for MathHandler {
         match op {
             MathOp::MathV2(MathV2::Add((a, b))) => {
                 let result = a + b;
-                println!("[CUSTOM MATH] {} + {} = {}", a, b, result);
+                println!("[CUSTOM MATH] {a} + {b} = {result}");
                 Box::new(result)
             }
             MathOp::MathV2(MathV2::Multiply((a, b))) => {
                 let result = a * b;
-                println!("[CUSTOM MATH] {} * {} = {}", a, b, result);
+                println!("[CUSTOM MATH] {a} * {b} = {result}");
                 Box::new(result)
             }
             MathOp::MathV2(MathV2::Divide((a, b))) => {
@@ -292,13 +292,13 @@ impl algae::Handler<MathOp> for MathHandler {
                     Box::new(Err::<i32, String>("Division by zero".to_string()))
                 } else {
                     let result = a / b;
-                    println!("[CUSTOM MATH] {} / {} = {}", a, b, result);
+                    println!("[CUSTOM MATH] {a} / {b} = {result}");
                     Box::new(Ok::<i32, String>(result))
                 }
             }
             MathOp::MathV2(MathV2::Power((base, exp))) => {
                 let result = base.pow(*exp);
-                println!("[CUSTOM MATH] {}^{} = {}", base, exp, result);
+                println!("[CUSTOM MATH] {base}^{exp} = {result}");
                 Box::new(result)
             }
         }
@@ -322,24 +322,24 @@ impl algae::Handler<FileOp> for FileHandler {
         match op {
             FileOp::FileV2(FileV2::Read(path)) => {
                 if let Some(content) = self.files.get(path) {
-                    println!("[CUSTOM FILE] Reading {}: {}", path, content);
+                    println!("[CUSTOM FILE] Reading {path}: {content}");
                     Box::new(Ok::<String, String>(content.clone()))
                 } else {
-                    println!("[CUSTOM FILE] File not found: {}", path);
-                    Box::new(Err::<String, String>(format!("File not found: {}", path)))
+                    println!("[CUSTOM FILE] File not found: {path}");
+                    Box::new(Err::<String, String>(format!("File not found: {path}")))
                 }
             }
             FileOp::FileV2(FileV2::Write((path, content))) => {
                 self.files.insert(path.clone(), content.clone());
-                println!("[CUSTOM FILE] Writing to {}: {}", path, content);
+                println!("[CUSTOM FILE] Writing to {path}: {content}");
                 Box::new(Ok::<(), String>(()))
             }
             FileOp::FileV2(FileV2::Delete(path)) => {
                 if self.files.remove(path).is_some() {
-                    println!("[CUSTOM FILE] Deleted: {}", path);
+                    println!("[CUSTOM FILE] Deleted: {path}");
                     Box::new(Ok::<(), String>(()))
                 } else {
-                    Box::new(Err::<(), String>(format!("File not found: {}", path)))
+                    Box::new(Err::<(), String>(format!("File not found: {path}")))
                 }
             }
         }
@@ -360,17 +360,17 @@ impl algae::Handler<LoggerOp> for LoggerHandler {
     fn handle(&mut self, op: &LoggerOp) -> Box<dyn std::any::Any + Send> {
         match op {
             LoggerOp::LoggerV2(LoggerV2::Info(msg)) => {
-                println!("[CUSTOM LOG INFO] {}", msg);
+                println!("[CUSTOM LOG INFO] {msg}");
                 self.count += 1;
                 Box::new(())
             }
             LoggerOp::LoggerV2(LoggerV2::Error(msg)) => {
-                println!("[CUSTOM LOG ERROR] {}", msg);
+                println!("[CUSTOM LOG ERROR] {msg}");
                 self.count += 1;
                 Box::new(())
             }
             LoggerOp::LoggerV2(LoggerV2::Debug(msg)) => {
-                println!("[CUSTOM LOG DEBUG] {}", msg);
+                println!("[CUSTOM LOG DEBUG] {msg}");
                 self.count += 1;
                 Box::new(())
             }
@@ -405,8 +405,7 @@ mod console_module {
 
         for i in 1..=3 {
             let _: () = perform!(ConsoleOp::Print(format!(
-                "Question {}: What's your favorite color?",
-                i
+                "Question {i}: What's your favorite color?"
             )));
             let answer: String = perform!(ConsoleOp::ReadLine);
             responses.push(answer);
@@ -434,7 +433,7 @@ mod console_module {
         fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
             match op {
                 Op::ConsoleOp(ConsoleOp::Print(msg)) => {
-                    println!("[CONSOLE] {}", msg);
+                    println!("[CONSOLE] {msg}");
                     Box::new(())
                 }
                 Op::ConsoleOp(ConsoleOp::ReadLine) => {
@@ -445,7 +444,7 @@ mod console_module {
                         .cloned()
                         .unwrap_or_else(|| "default".to_string());
                     *index += 1;
-                    println!("[CONSOLE] <input: {}>", response);
+                    println!("[CONSOLE] <input: {response}>");
                     Box::new(response)
                 }
                 Op::ConsoleOp(ConsoleOp::Clear) => {
@@ -483,12 +482,12 @@ mod math_module {
             match op {
                 Op::MathOp(MathOp::Add((a, b))) => {
                     let result = a + b;
-                    println!("[MATH] {} + {} = {}", a, b, result);
+                    println!("[MATH] {a} + {b} = {result}");
                     Box::new(result)
                 }
                 Op::MathOp(MathOp::Multiply((a, b))) => {
                     let result = a * b;
-                    println!("[MATH] {} * {} = {}", a, b, result);
+                    println!("[MATH] {a} * {b} = {result}");
                     Box::new(result)
                 }
                 Op::MathOp(MathOp::Divide((a, b))) => {
@@ -496,13 +495,13 @@ mod math_module {
                         Box::new(Err::<i32, String>("Division by zero".to_string()))
                     } else {
                         let result = a / b;
-                        println!("[MATH] {} / {} = {}", a, b, result);
+                        println!("[MATH] {a} / {b} = {result}");
                         Box::new(Ok::<i32, String>(result))
                     }
                 }
                 Op::MathOp(MathOp::Power((base, exp))) => {
                     let result = base.pow(*exp);
-                    println!("[MATH] {}^{} = {}", base, exp, result);
+                    println!("[MATH] {base}^{exp} = {result}");
                     Box::new(result)
                 }
             }
@@ -539,7 +538,7 @@ impl Handler<Op> for UnifiedHandler {
         match op {
             // Console operations
             Op::Console(Console::Print(msg)) => {
-                println!("[UNIFIED CONSOLE] {}", msg);
+                println!("[UNIFIED CONSOLE] {msg}");
                 Box::new(())
             }
             Op::Console(Console::ReadLine) => {
@@ -549,19 +548,19 @@ impl Handler<Op> for UnifiedHandler {
                     "default".to_string()
                 };
                 self.console_index += 1;
-                println!("[UNIFIED CONSOLE] <input: {}>", response);
+                println!("[UNIFIED CONSOLE] <input: {response}>");
                 Box::new(response)
             }
 
             // Math operations
             Op::Math(Math::Add((a, b))) => {
                 let result = a + b;
-                println!("[UNIFIED MATH] {} + {} = {}", a, b, result);
+                println!("[UNIFIED MATH] {a} + {b} = {result}");
                 Box::new(result)
             }
             Op::Math(Math::Multiply((a, b))) => {
                 let result = a * b;
-                println!("[UNIFIED MATH] {} * {} = {}", a, b, result);
+                println!("[UNIFIED MATH] {a} * {b} = {result}");
                 Box::new(result)
             }
             Op::Math(Math::Divide((a, b))) => {
@@ -569,7 +568,7 @@ impl Handler<Op> for UnifiedHandler {
                     Box::new(Err::<i32, String>("Division by zero".to_string()))
                 } else {
                     let result = a / b;
-                    println!("[UNIFIED MATH] {} / {} = {}", a, b, result);
+                    println!("[UNIFIED MATH] {a} / {b} = {result}");
                     Box::new(Ok::<i32, String>(result))
                 }
             }
@@ -580,40 +579,39 @@ impl Handler<Op> for UnifiedHandler {
                     .file_contents
                     .get(path)
                     .cloned()
-                    .unwrap_or_else(|| format!("No content found for {}", path));
-                println!("[UNIFIED FILE] Reading {}: {}", path, content);
+                    .unwrap_or_else(|| format!("No content found for {path}"));
+                println!("[UNIFIED FILE] Reading {path}: {content}");
                 Box::new(Ok::<String, String>(content))
             }
             Op::File(File::Write((path, content))) => {
                 self.file_contents.insert(path.clone(), content.clone());
-                println!("[UNIFIED FILE] Writing to {}: {}", path, content);
+                println!("[UNIFIED FILE] Writing to {path}: {content}");
                 Box::new(Ok::<(), String>(()))
             }
 
             // Logger operations
             Op::Logger(Logger::Info(msg)) => {
-                println!("[UNIFIED LOG INFO] {}", msg);
+                println!("[UNIFIED LOG INFO] {msg}");
                 Box::new(())
             }
             Op::Logger(Logger::Error(msg)) => {
-                println!("[UNIFIED LOG ERROR] {}", msg);
+                println!("[UNIFIED LOG ERROR] {msg}");
                 Box::new(())
             }
             Op::Logger(Logger::Debug(msg)) => {
-                println!("[UNIFIED LOG DEBUG] {}", msg);
+                println!("[UNIFIED LOG DEBUG] {msg}");
                 Box::new(())
             }
 
             // HTTP operations
             Op::Http(Http::Get(url)) => {
-                println!("[UNIFIED HTTP] GET {}", url);
+                println!("[UNIFIED HTTP] GET {url}");
                 Box::new(Ok::<String, String>(format!(
-                    "{{\"data\": \"mock response from {}\"}}",
-                    url
+                    "{{\"data\": \"mock response from {url}\"}}"
                 )))
             }
             Op::Http(Http::Post((url, body))) => {
-                println!("[UNIFIED HTTP] POST {} with body: {}", url, body);
+                println!("[UNIFIED HTTP] POST {url} with body: {body}");
                 Box::new(Ok::<String, String>(
                     "{\"status\": \"success\"}".to_string(),
                 ))
@@ -631,7 +629,7 @@ fn main() {
 
     println!("1. Single effect! macro with multiple families (traditional approach):");
     let result1 = comprehensive_demo().handle(UnifiedHandler::new()).run();
-    println!("Traditional result: {}\n", result1);
+    println!("Traditional result: {result1}\n");
 
     println!("2. Multiple effect! with custom root names:");
 
@@ -639,19 +637,19 @@ fn main() {
     let console_result = console_demo_v2()
         .handle(ConsoleHandler::new(vec!["Alice".to_string()]))
         .run();
-    println!("Custom Console result: {}", console_result);
+    println!("Custom Console result: {console_result}");
 
     // Math demo
     let math_result = math_demo_v2(7, 3).handle(MathHandler).run();
-    println!("Custom Math result: {}", math_result);
+    println!("Custom Math result: {math_result}");
 
     // File demo
     let file_result = file_demo_v2().handle(FileHandler::new()).run();
-    println!("Custom File result: {}", file_result);
+    println!("Custom File result: {file_result}");
 
     // Logger demo
     let logger_result = logger_demo_v2().handle(LoggerHandler::new()).run();
-    println!("Custom Logger result: {} log entries\n", logger_result);
+    println!("Custom Logger result: {logger_result} log entries\n");
 
     println!("3. Module-based separation (for large codebases):");
 
@@ -663,32 +661,32 @@ fn main() {
             "Red".to_string(),
         ]))
         .run();
-    println!("Console responses: {:?}", console_responses);
+    println!("Console responses: {console_responses:?}");
 
     // Math module demo
     let math_result = math_module::complex_calculation(5)
         .handle(math_module::MathHandler)
         .run();
-    println!("Math result: {:?}\n", math_result);
+    println!("Math result: {math_result:?}\n");
 
     println!("=== Approaches Summary ===");
     println!("✅ APPROACH 1: Single effect! with multiple families");
     println!("   - Traditional approach, simplest for small-medium projects");
     println!("   - All effects in one unified enum");
     println!("   - Single handler implementation");
-    println!("");
+    println!();
     println!("✅ APPROACH 2: Multiple effect! with custom root names");
     println!("   - Best for modular organization in same module");
     println!("   - Each effect family has its own root enum");
     println!("   - Use combine_roots! for unified handling");
     println!("   - Clear separation of concerns");
-    println!("");
+    println!();
     println!("✅ APPROACH 3: Module-based separation");
     println!("   - Best for large teams and codebases");
     println!("   - Each module owns its effects");
     println!("   - Natural namespace separation");
     println!("   - Independent testing and development");
-    println!("");
+    println!();
     println!("🎯 Choose based on your needs:");
     println!("   • Small project: Approach 1");
     println!("   • Organized same-module effects: Approach 2");

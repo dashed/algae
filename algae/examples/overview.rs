@@ -18,7 +18,7 @@ impl Handler<Op> for DemoHandler {
     fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
         match op {
             Op::Demo(Demo::Message(msg)) => {
-                println!("📢 {}", msg);
+                println!("📢 {msg}");
                 Box::new(())
             }
             Op::Demo(Demo::GetNumber) => Box::new(42),
@@ -30,7 +30,7 @@ impl Handler<Op> for DemoHandler {
 fn demo_computation() -> i32 {
     let _: () = perform!(Demo::Message("Welcome to Algae!".to_string()));
     let number: i32 = perform!(Demo::GetNumber);
-    let _: () = perform!(Demo::Message(format!("The answer is {}", number)));
+    let _: () = perform!(Demo::Message(format!("The answer is {number}")));
     number
 }
 
@@ -41,7 +41,7 @@ fn main() {
     // Run a quick demo
     let result = demo_computation().handle(DemoHandler).run();
 
-    println!("Demo result: {}\n", result);
+    println!("Demo result: {result}\n");
 
     println!("📚 LEARNING ROADMAP");
     println!("===================\n");

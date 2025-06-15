@@ -43,9 +43,9 @@ fn main() {
 
     if let Err(panic_payload) = result {
         if let Some(msg) = panic_payload.downcast_ref::<String>() {
-            println!("Error: {}\n", msg);
+            println!("Error: {msg}\n");
         } else if let Some(msg) = panic_payload.downcast_ref::<&str>() {
-            println!("Error: {}\n", msg);
+            println!("Error: {msg}\n");
         }
     }
 
@@ -54,9 +54,9 @@ fn main() {
 
     if let Err(panic_payload) = result {
         if let Some(msg) = panic_payload.downcast_ref::<String>() {
-            println!("Error: {}\n", msg);
+            println!("Error: {msg}\n");
         } else if let Some(msg) = panic_payload.downcast_ref::<&str>() {
-            println!("Error: {}\n", msg);
+            println!("Error: {msg}\n");
         }
     }
 

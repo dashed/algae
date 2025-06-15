@@ -34,7 +34,8 @@ fn main() {
 
     // Debug type IDs
     use std::any::{Any, TypeId};
-    println!("String TypeId: {:?}", TypeId::of::<String>());
+    let string_type = TypeId::of::<String>();
+    println!("String TypeId: {string_type:?}");
     let test_string = "Hello from handler!".to_string();
     println!(
         "test_string TypeId: {:?}",
@@ -42,10 +43,14 @@ fn main() {
     );
 
     // Test other types that might match the unknown TypeId
-    println!("() TypeId: {:?}", TypeId::of::<()>());
-    println!("i32 TypeId: {:?}", TypeId::of::<i32>());
-    println!("Test::Hello TypeId: {:?}", TypeId::of::<Test>());
-    println!("Op TypeId: {:?}", TypeId::of::<Op>());
+    let unit_type = TypeId::of::<()>();
+    println!("() TypeId: {unit_type:?}");
+    let i32_type = TypeId::of::<i32>();
+    println!("i32 TypeId: {i32_type:?}");
+    let test_type = TypeId::of::<Test>();
+    println!("Test::Hello TypeId: {test_type:?}");
+    let op_type = TypeId::of::<Op>();
+    println!("Op TypeId: {op_type:?}");
 
     // Print the generated types
     let op = Test::Hello;

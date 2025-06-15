@@ -24,17 +24,18 @@ type Row = String;
 // Complex effectful function as shown in README
 #[effectful]
 fn process_file(filename: String) -> Result<usize, String> {
-    let _: () = perform!(Logger::Info(format!("Processing {}", filename)));
+    let _: () = perform!(Logger::Info(format!("Processing {filename}")));
 
     let content: Result<String, std::io::Error> = perform!(FileSystem::Read(filename.clone()));
-    let content = content.map_err(|e| format!("Read error: {}", e))?;
+    let content = content.map_err(|e| format!("Read error: {e}"))?;
 
     let rows: Vec<String> = perform!(Database::Query(format!(
         "INSERT INTO files (name, content) VALUES ('{}', '{}')",
         filename, content
     )));
 
-    let _: () = perform!(Logger::Info(format!("Inserted {} rows", rows.len())));
+    let row_count = rows.len();
+    let _: () = perform!(Logger::Info(format!("Inserted {row_count} rows")));
     Ok(rows.len())
 }
 
@@ -80,8 +81,8 @@ impl Handler<Op> for ProductionHandler {
             Op::Database(Database::Query(sql)) => {
                 // Simulate database insert returning affected rows
                 let rows = vec![
-                    format!("Row 1 for query: {}", sql),
-                    format!("Row 2 for query: {}", sql),
+                    format!("Row 1 for query: {sql}"),
+                    format!("Row 2 for query: {sql}"),
                 ];
                 Box::new(rows)
             }
@@ -90,13 +91,13 @@ impl Handler<Op> for ProductionHandler {
                 Box::new(Ok::<u64, String>(2))
             }
             Op::Logger(Logger::Info(msg)) => {
-                println!("[INFO] {}", msg);
-                self.logs.push(format!("INFO: {}", msg));
+                println!("[INFO] {msg}");
+                self.logs.push(format!("INFO: {msg}"));
                 Box::new(())
             }
             Op::Logger(Logger::Error(msg)) => {
-                println!("[ERROR] {}", msg);
-                self.logs.push(format!("ERROR: {}", msg));
+                println!("[ERROR] {msg}");
+                self.logs.push(format!("ERROR: {msg}"));
                 Box::new(())
             }
         }
@@ -151,11 +152,11 @@ impl Handler<Op> for MockHandler {
             }
             Op::Database(Database::Execute(_sql)) => Box::new(Ok::<u64, String>(1)),
             Op::Logger(Logger::Info(msg)) => {
-                self.logs.push(format!("MOCK INFO: {}", msg));
+                self.logs.push(format!("MOCK INFO: {msg}"));
                 Box::new(())
             }
             Op::Logger(Logger::Error(msg)) => {
-                self.logs.push(format!("MOCK ERROR: {}", msg));
+                self.logs.push(format!("MOCK ERROR: {msg}"));
                 Box::new(())
             }
         }
@@ -175,7 +176,8 @@ fn batch_process(filenames: Vec<String>) -> Vec<Result<usize, String>> {
         results.push(result);
     }
 
-    let _: () = perform!(Logger::Info(format!("Processed {} files", results.len())));
+    let file_count = results.len();
+    let _: () = perform!(Logger::Info(format!("Processed {file_count} files")));
     results
 }
 
@@ -184,7 +186,8 @@ fn create_report() -> String {
     let _: () = perform!(Logger::Info("Generating report".to_string()));
 
     let data: Vec<String> = perform!(Database::Query("SELECT * FROM processed_files".to_string()));
-    let report = format!("Report: Found {} records", data.len());
+    let record_count = data.len();
+    let report = format!("Report: Found {record_count} records");
 
     let _: Result<(), std::io::Error> = perform!(FileSystem::Write((
         "report.txt".to_string(),
@@ -205,8 +208,8 @@ fn main() {
         .run();
 
     match result {
-        Ok(count) => println!("   Successfully processed file, inserted {} rows", count),
-        Err(e) => println!("   Error: {}", e),
+        Ok(count) => println!("   Successfully processed file, inserted {count} rows"),
+        Err(e) => println!("   Error: {e}"),
     }
 
     // Example 2: Testing with mock handler
@@ -219,14 +222,14 @@ fn main() {
         .run();
 
     match mock_result {
-        Ok(count) => println!("   Mock test passed, processed {} rows", count),
-        Err(e) => println!("   Mock test failed: {}", e),
+        Ok(count) => println!("   Mock test passed, processed {count} rows"),
+        Err(e) => println!("   Mock test failed: {e}"),
     }
 
     // Example 3: Report generation
     println!("\n3. Generating report:");
     let report = create_report().handle(ProductionHandler::new()).run();
-    println!("   {}", report);
+    println!("   {report}");
 
     // Example 4: Error handling
     println!("\n4. Error handling (non-existent file):");
@@ -236,7 +239,7 @@ fn main() {
 
     match error_result {
         Ok(_) => println!("   Unexpected success"),
-        Err(e) => println!("   Expected error: {}", e),
+        Err(e) => println!("   Expected error: {e}"),
     }
 
     println!("\n=== Example completed successfully! ===");

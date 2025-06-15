@@ -1491,7 +1491,7 @@ mod tests {
                         // Set new string
                         {
                             let effect = algae::Effect::new(
-                                Another::SetString(format!("{} world!", current)).into(),
+                                Another::SetString(format!("{current} world!")).into(),
                             );
                             let reply_opt = yield effect;
                             let _: () = reply_opt.unwrap().take::<()>();
@@ -1558,7 +1558,7 @@ mod tests {
                             reply_opt.unwrap().take::<String>()
                         };
 
-                        format!("{}: {}", text, value)
+                        format!("{text}: {value}")
                     },
                 )
             }
@@ -1600,14 +1600,12 @@ mod tests {
             if let Some(panic_str) = panic_payload.downcast_ref::<&str>() {
                 assert!(
                     panic_str.contains("reply filled twice"),
-                    "Panic message should mention 'reply filled twice', got: {}",
-                    panic_str
+                    "Panic message should mention 'reply filled twice', got: {panic_str}"
                 );
             } else if let Some(panic_string) = panic_payload.downcast_ref::<String>() {
                 assert!(
                     panic_string.contains("reply filled twice"),
-                    "Panic message should mention 'reply filled twice', got: {}",
-                    panic_string
+                    "Panic message should mention 'reply filled twice', got: {panic_string}"
                 );
             }
         }
@@ -1660,13 +1658,11 @@ mod tests {
             assert!(
                 panic_message.contains("expected 'alloc::string::String'")
                     || panic_message.contains("expected 'String'"),
-                "Panic message should mention expected type String, got: {}",
-                panic_message
+                "Panic message should mention expected type String, got: {panic_message}"
             );
             assert!(
                 panic_message.contains("but got 'i32'"),
-                "Panic message should mention actual type i32, got: {}",
-                panic_message
+                "Panic message should mention actual type i32, got: {panic_message}"
             );
         }
     }
@@ -1735,8 +1731,7 @@ mod tests {
             // Should mention Result types
             assert!(
                 panic_message.contains("Result") && panic_message.contains("String"),
-                "Panic message should mention Result types, got: {}",
-                panic_message
+                "Panic message should mention Result types, got: {panic_message}"
             );
         }
     }

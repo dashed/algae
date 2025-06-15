@@ -53,16 +53,30 @@ check: ## Quick compilation check
 	@echo "$(BOLD)$(BLUE)Checking compilation...$(RESET)"
 	@cargo check --lib --all-features
 
-clippy: ## Run clippy lints
-	@echo "$(BOLD)$(YELLOW)Running clippy on library code (strict, excluding tests)...$(RESET)"
-	@cargo clippy --lib --all-features --bins -- -D warnings
-	@echo "$(BOLD)$(YELLOW)Running clippy on examples (warnings allowed)...$(RESET)"
+clippy: ## Run clippy lints (matches original GitHub Actions intent)
+	@echo "$(BOLD)$(YELLOW)Running clippy on library code (strict)...$(RESET)"
+	@cargo clippy --lib --all-features -- -D warnings
+	@echo "$(BOLD)$(YELLOW)Running clippy on binary targets (strict)...$(RESET)"
+	@cargo clippy --bins --all-features -- -D warnings || true
+	@echo "$(BOLD)$(YELLOW)Running clippy on tests (warnings allowed)...$(RESET)"
+	@cargo clippy --tests --all-features || true
+	@echo "$(BOLD)$(YELLOW)Running clippy on working examples (warnings allowed)...$(RESET)"
 	@cargo clippy --example multiple_effects_demo || true
 	@cargo clippy --example custom_root_effects || true
 	@cargo clippy --example test_error_messages || true
 	@cargo clippy --example console || true
 	@cargo clippy --example minimal || true
 	@cargo clippy --example overview || true
+
+clippy-strict: ## Run clippy with all targets and strict warnings (excludes duplicate_root_test)
+	@echo "$(BOLD)$(YELLOW)Running clippy on all targets (strict)...$(RESET)"
+	@cargo clippy --lib --all-features -- -D warnings
+	@cargo clippy --bins --all-features -- -D warnings
+	@cargo clippy --tests --all-features -- -D warnings
+	@for example in $$(ls algae/examples/*.rs | grep -v duplicate_root_test | sed 's/.*\///' | sed 's/\.rs//'); do \
+		echo "$(YELLOW)Checking example: $$example$(RESET)"; \
+		cargo clippy --example $$example --all-features -- -D warnings; \
+	done
 
 fmt: ## Format code
 	@echo "$(BOLD)$(MAGENTA)Formatting code...$(RESET)"
@@ -158,8 +172,8 @@ ci-local: ## Run the complete CI pipeline locally
 	@echo "$(BOLD)$(YELLOW)Step 1: Check formatting$(RESET)"
 	@$(MAKE) fmt-check
 	@echo ""
-	@echo "$(BOLD)$(YELLOW)Step 2: Run clippy on library code$(RESET)"
-	@$(MAKE) clippy
+	@echo "$(BOLD)$(YELLOW)Step 2: Run clippy on all targets (strict)$(RESET)"
+	@$(MAKE) clippy-strict
 	@echo ""
 	@echo "$(BOLD)$(YELLOW)Step 3: Run tests$(RESET)"
 	@$(MAKE) test
