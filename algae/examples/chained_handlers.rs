@@ -82,11 +82,11 @@ fn chained_computation() -> String {
 }
 
 fn main() {
-    println!("=== Example 1: Starting with empty VecHandler ===\n");
+    println!("=== Example 1: Starting with begin_chain ===\n");
 
-    // Start with an empty VecHandler and chain handlers
+    // Start with begin_chain() and chain handlers
     let result = chained_computation()
-        .handle_all(Vec::<Box<dyn PartialHandler<Op> + Send>>::new()) // Start with empty
+        .begin_chain()
         .handle(ConsoleHandler) // Add first handler
         .handle(FileHandler) // Add second handler
         .handle(LoggerHandler) // Add third handler
@@ -151,7 +151,7 @@ fn main() {
     let use_file_handler = true;
     let use_logger = true;
 
-    let mut handled = chained_computation().handle_all([ConsoleHandler]);
+    let mut handled = chained_computation().begin_chain().handle(ConsoleHandler);
 
     if use_file_handler {
         handled = handled.handle(FileHandler);

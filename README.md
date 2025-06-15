@@ -1449,7 +1449,7 @@ let result = computation()
 
 // Chaining handlers one by one
 let result = computation()
-    .handle_all(vec![])  // Start with empty VecHandler
+    .begin_chain()          // Start with empty VecHandler
     .handle(ConsoleHandler)
     .handle(FileHandler)
     .handle(LoggerHandler)
@@ -1463,7 +1463,7 @@ let result = computation()
     .run_checked()?;
 
 // Building handler chain dynamically
-let mut handled = computation().handle_all([ConsoleHandler]);
+let mut handled = computation().begin_chain().handle(ConsoleHandler);
 if need_file_ops {
     handled = handled.handle(FileHandler);
 }
@@ -1575,6 +1575,7 @@ let result = computation.run_checked_with(TotalHandler)?;
 > - [`examples/partial_handlers.rs`](algae/examples/partial_handlers.rs) - Comprehensive demonstrations of partial handlers
 > - [`examples/variable_handler_chain.rs`](algae/examples/variable_handler_chain.rs) - Variable-length handler chains with zero-panic execution
 > - [`examples/chained_handlers.rs`](algae/examples/chained_handlers.rs) - Demonstrates the `.handle().handle().handle()` chaining syntax
+> - [`examples/clean_chaining.rs`](algae/examples/clean_chaining.rs) - Simplest handler chaining with `.begin_chain()`
 
 ## 🔬 Performance
 

@@ -568,6 +568,53 @@ impl<R, Op: 'static> Effectful<R, Op> {
         Handled { eff: self, h }
     }
 
+    /// Begins an empty handler chain that can be extended with `.handle()` calls.
+    ///
+    /// This method enables the fluent `.handle().handle().handle()` pattern for
+    /// partial handlers by starting with an empty `VecHandler`.
+    ///
+    /// # Returns
+    ///
+    /// A `Handled` with an empty `VecHandler` ready for chaining.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// # use algae::prelude::*;
+    /// # effect! {
+    /// #     Console::Print (String) -> ();
+    /// #     File::Read (String) -> String;
+    /// #     Logger::Info (String) -> ();
+    /// # }
+    /// # struct ConsoleHandler;
+    /// # struct FileHandler;
+    /// # struct LoggerHandler;
+    /// # impl PartialHandler<Op> for ConsoleHandler { /* ... */ }
+    /// # impl PartialHandler<Op> for FileHandler { /* ... */ }
+    /// # impl PartialHandler<Op> for LoggerHandler { /* ... */ }
+    /// #[effectful]
+    /// fn computation() -> String {
+    ///     // ... effectful operations ...
+    /// }
+    ///
+    /// let result = computation()
+    ///     .begin_chain()
+    ///     .handle(ConsoleHandler)
+    ///     .handle(FileHandler)
+    ///     .handle(LoggerHandler)
+    ///     .run_checked()?;
+    /// ```
+    pub fn begin_chain(self) -> Handled<R, Op, VecHandler<Op>>
+    where
+        Op: Send,
+    {
+        Handled {
+            eff: self,
+            h: VecHandler::new(),
+        }
+    }
+
     /// Executes the effectful computation with a partial handler that may decline operations.
     ///
     /// Unlike `run_with`, this method returns a `Result` indicating whether all effects
@@ -1231,7 +1278,7 @@ impl<R, Op: 'static + Send> Handled<R, Op, VecHandler<Op>> {
 /// - [`VecHandler`] - Collection of handlers tried in order
 /// - [`UnhandledOp`] - Error returned when no handler handles an operation
 /// - [`UnhandledOpError`] - Lightweight error with just operation name
-/// - [`IntoVecHandler`] - Trait for converting handlers to VecHandler
+/// - [`IntoPartialHandler`] - Trait for converting handlers to PartialHandler
 ///
 /// ## Macros (when "macros" feature is enabled)
 /// - `effect!` - Macro for defining effect families and operations
@@ -3009,9 +3056,9 @@ mod tests {
             product
         }
 
-        // Test chaining with empty initial vector
+        // Test direct chaining with begin_chain
         let result = chained_computation()
-            .handle_all(Vec::<Box<dyn PartialHandler<Op> + Send>>::new())
+            .begin_chain()
             .handle(Handler1)
             .handle(Handler2)
             .handle(Handler3)
@@ -3019,7 +3066,7 @@ mod tests {
 
         assert_eq!(result.unwrap(), 60); // (10 + 20) * 2 = 60
 
-        // Test chaining starting with one handler
+        // Test chaining starting with handle_all (still works)
         let result = chained_computation()
             .handle_all([Handler1])
             .handle(Handler2)
@@ -3030,7 +3077,7 @@ mod tests {
 
         // Test partial chain (missing logger handler)
         let result = chained_computation()
-            .handle_all(Vec::<Box<dyn PartialHandler<Op> + Send>>::new())
+            .begin_chain()
             .handle(Handler1)
             .handle(Handler2)
             // Intentionally not adding Handler3
