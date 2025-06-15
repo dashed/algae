@@ -120,6 +120,10 @@ examples: ## Check that all working examples compile
 	@cargo check --example theory
 	@echo "$(YELLOW)✓$(RESET) advanced"
 	@cargo check --example advanced
+	@echo "$(YELLOW)✓$(RESET) test_non_default_payload"
+	@cargo check --example test_non_default_payload
+	@echo "$(YELLOW)✓$(RESET) test_manual_default"
+	@cargo check --example test_manual_default
 	@echo "$(GREEN)All working examples compile successfully!$(RESET)"
 
 run-examples: ## Run selected examples to see them in action

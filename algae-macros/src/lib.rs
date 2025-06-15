@@ -322,8 +322,8 @@ pub fn effect(item: TokenStream) -> TokenStream {
     let mut op_variants = TokenStream2::new();
     let mut impl_froms = TokenStream2::new();
 
-    // Get first family info before iterating
-    let first_family = families.values().next().cloned();
+    // Note: We used to use first_family for Default impl generation,
+    // but that's been removed to avoid requiring Default bounds
 
     for (_fam_name_str, (family_ident, variants)) in families {
         // each variant
@@ -337,38 +337,11 @@ pub fn effect(item: TokenStream) -> TokenStream {
             }
         }
 
-        // Create Default implementation for this family
-        let first_variant = variants.first();
-        let family_default = if let Some(first_variant) = first_variant {
-            let variant = &first_variant.variant;
-            if first_variant.payload.is_some() {
-                quote! {
-                    impl Default for #family_ident {
-                        fn default() -> Self {
-                            #family_ident::#variant(Default::default())
-                        }
-                    }
-                }
-            } else {
-                quote! {
-                    impl Default for #family_ident {
-                        fn default() -> Self {
-                            #family_ident::#variant
-                        }
-                    }
-                }
-            }
-        } else {
-            quote! {}
-        };
-
         family_enums.extend(quote! {
             #[derive(Debug)]
             pub enum #family_ident {
                 #variant_tokens
             }
-
-            #family_default
         });
 
         // RootEnum::Family(Family)
@@ -384,32 +357,8 @@ pub fn effect(item: TokenStream) -> TokenStream {
     // ── 3.  Root enum (configurable name) ────────────────────────────────────
 
     // For Default implementation, we need to pick the first family and first variant
-    let default_impl = if let Some((family_ident, variants)) = first_family {
-        if let Some(first_variant) = variants.first() {
-            let variant = &first_variant.variant;
-            if first_variant.payload.is_some() {
-                quote! {
-                    impl Default for #root_ident {
-                        fn default() -> Self {
-                            #root_ident::#family_ident(#family_ident::#variant(Default::default()))
-                        }
-                    }
-                }
-            } else {
-                quote! {
-                    impl Default for #root_ident {
-                        fn default() -> Self {
-                            #root_ident::#family_ident(#family_ident::#variant)
-                        }
-                    }
-                }
-            }
-        } else {
-            quote! {}
-        }
-    } else {
-        quote! {}
-    };
+    // Note: Default implementations removed to avoid requiring Default bounds
+    // on payload types. Users can implement Default manually if needed.
 
     let output = quote! {
         // Sentry enum to detect duplicate root names in same module
@@ -425,8 +374,6 @@ pub fn effect(item: TokenStream) -> TokenStream {
         }
 
         #impl_froms
-
-        #default_impl
     };
 
     output.into()
