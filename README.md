@@ -36,7 +36,7 @@ Enable the required nightly features in your `src/main.rs` or `lib.rs`:
 #![feature(coroutines, coroutine_trait, yield_expr)]
 ```
 
-Here's a simple example:
+Here's a step-by-step example showing both the explicit and convenient approaches:
 
 ```rust
 #![feature(coroutines, coroutine_trait, yield_expr)]
@@ -48,7 +48,28 @@ effect! {
     Console::ReadLine -> String;
 }
 
-// 2. Write effectful functions
+// 2a. Write effectful functions (explicit approach)
+fn greet_user_explicit() -> Effectful<String, Op> {
+    Effectful::new(#[coroutine] move |mut _reply: Option<Reply>| {
+        // Print prompt
+        {
+            let effect = Effect::new(Console::Print("What's your name?".to_string()).into());
+            let reply_opt = yield effect;
+            let _: () = reply_opt.unwrap().take::<()>();
+        }
+        
+        // Read input
+        let name: String = {
+            let effect = Effect::new(Console::ReadLine.into());
+            let reply_opt = yield effect;
+            reply_opt.unwrap().take::<String>()
+        };
+        
+        format!("Hello, {}!", name)
+    })
+}
+
+// 2b. Write effectful functions (convenient approach - same behavior!)
 #[effectful]
 fn greet_user() -> String {
     let _: () = perform!(Console::Print("What's your name?".to_string()));
@@ -56,7 +77,7 @@ fn greet_user() -> String {
     format!("Hello, {}!", name)
 }
 
-// 3. Implement handlers
+// 3. Implement handlers (same for both approaches)
 struct RealConsoleHandler;
 
 impl Handler<Op> for RealConsoleHandler {
@@ -75,80 +96,254 @@ impl Handler<Op> for RealConsoleHandler {
     }
 }
 
-// 4. Run with different handlers
+// 4. Run with handlers (both functions work identically)
 fn main() {
-    // Production: use real I/O
-    let result = greet_user()
+    // Both approaches produce the same result
+    let result1 = greet_user_explicit()
         .handle(RealConsoleHandler)
         .run();
     
-    println!("Result: {}", result);
+    let result2 = greet_user()
+        .handle(RealConsoleHandler)
+        .run();
+    
+    println!("Explicit result: {}", result1);
+    println!("Convenient result: {}", result2);
+    // Both print the same thing!
 }
 ```
 
-> **📁 Working Example**: See [`examples/readme.rs`](algae/examples/readme.rs) for a complete, runnable version of this code including both real and mock handlers.
+**Key insight:** The `#[effectful]` macro is pure convenience - it generates exactly the same `Effectful<R, Op>` type and runtime behavior as the explicit approach, but with much cleaner syntax.
+
+> **📁 Working Examples**: 
+> - [`examples/readme.rs`](algae/examples/readme.rs) - Complete version of this code with real and mock handlers
+> - [`examples/explicit_vs_convenient.rs`](algae/examples/explicit_vs_convenient.rs) - Side-by-side comparison proving both approaches are identical
 
 ## 📚 Core Concepts
 
-### Effects as Descriptions
+Understanding algae requires familiarity with several key types and concepts. This section provides a comprehensive guide to all the core library components and how they work together.
 
-In algae, effects are **descriptions** of what you want to do, not how to do it:
+### 🎭 Effects as Descriptions
+
+Effects in algae are **descriptions** of what you want to do, not how to do it. They're defined using the `effect!` macro, which generates Rust enums representing your operations:
 
 ```rust
 effect! {
+    // Each line defines an operation: Family::Operation (Parameters) -> ReturnType
     FileSystem::Read (String) -> Result<String, std::io::Error>;
     FileSystem::Write ((String, String)) -> Result<(), std::io::Error>;
+    
     Database::Query (String) -> Vec<Row>;
+    Database::Execute (String) -> Result<u64, DbError>;
+    
     Logger::Info (String) -> ();
+    Logger::Error (String) -> ();
 }
 ```
 
-### Effectful Functions
+The `effect!` macro generates several types for you:
 
-Functions marked with `#[effectful]` can perform effects using `perform!`:
+```rust
+// Generated effect family enums
+pub enum FileSystem {
+    Read(String),
+    Write((String, String)),
+}
+
+pub enum Database {
+    Query(String),
+    Execute(String),
+}
+
+pub enum Logger {
+    Info(String),
+    Error(String),
+}
+
+// Generated unified operation type
+pub enum Op {
+    FileSystem(FileSystem),
+    Database(Database),
+    Logger(Logger),
+}
+
+// Generated conversion traits
+impl From<FileSystem> for Op { ... }
+impl From<Database> for Op { ... }
+impl From<Logger> for Op { ... }
+```
+
+### 🔧 `Effectful<R, Op>` - Effectful Computations
+
+The `Effectful<R, Op>` struct is the heart of algae. It represents a computation that:
+- **May perform effects** of type `Op` during execution
+- **Eventually produces a result** of type `R`
+- **Can be run with different handlers** for different behaviors
+
+```rust
+// Type signature breakdown:
+// Effectful<R, Op>
+//          │  └── The type of effects this computation can perform
+//          └────── The type of result this computation produces
+
+// Example: A computation that performs Console and Math effects and returns an i32
+type MyComputation = Effectful<i32, Op>;
+```
+
+#### Creating Effectful Computations (The Explicit Way)
+
+Let's first see how to create effectful computations explicitly to understand what's happening under the hood:
+
+```rust
+use algae::prelude::*;
+
+// Explicit function that returns Effectful<R, Op>
+fn calculate_with_logging_explicit(x: i32, y: i32) -> Effectful<i32, Op> {
+    Effectful::new(#[coroutine] move |mut _reply: Option<Reply>| {
+        // Manually perform Logger::Info effect
+        {
+            let effect = Effect::new(Logger::Info(format!("Calculating {} + {}", x, y)).into());
+            let reply_opt = yield effect;
+            let _: () = reply_opt.unwrap().take::<()>();
+        }
+        
+        // Manually perform Math::Add effect
+        let result: i32 = {
+            let effect = Effect::new(Math::Add((x, y)).into());
+            let reply_opt = yield effect;
+            reply_opt.unwrap().take::<i32>()
+        };
+        
+        // Manually perform another Logger::Info effect
+        {
+            let effect = Effect::new(Logger::Info(format!("Result: {}", result)).into());
+            let reply_opt = yield effect;
+            let _: () = reply_opt.unwrap().take::<()>();
+        }
+        
+        result
+    })
+}
+```
+
+This explicit approach shows exactly what's happening:
+1. **Return type is explicit**: `Effectful<i32, Op>` - no magic
+2. **Coroutine creation**: We manually create the coroutine with `Effectful::new()`
+3. **Effect operations**: Each effect is manually created, yielded, and the reply extracted
+4. **Type safety**: We explicitly specify the expected return types
+
+#### Creating Effectful Computations (The Convenient Way)
+
+Writing coroutines manually is verbose and error-prone. The `#[effectful]` attribute and `perform!` macro automate this boilerplate:
 
 ```rust
 #[effectful]
-fn process_file(filename: String) -> Result<usize, String> {
-    let _: () = perform!(Logger::Info(format!("Processing {}", filename)));
-    
-    let content: Result<String, std::io::Error> = perform!(FileSystem::Read(filename.clone()));
-    let content = content.map_err(|e| format!("Read error: {}", e))?;
-    
-    let rows: Vec<String> = perform!(Database::Query(
-        format!("INSERT INTO files (name, content) VALUES ('{}', '{}')", filename, content)
-    ));
-    
-    let _: () = perform!(Logger::Info(format!("Inserted {} rows", rows.len())));
-    Ok(rows.len())
+fn calculate_with_logging(x: i32, y: i32) -> i32 {
+    let _: () = perform!(Logger::Info(format!("Calculating {} + {}", x, y)));
+    let result: i32 = perform!(Math::Add((x, y)));
+    let _: () = perform!(Logger::Info(format!("Result: {}", result)));
+    result
+}
+// Actually returns: Effectful<i32, Op> (macro transforms the return type)
+```
+
+**What the `#[effectful]` macro does:**
+1. **Transforms return type**: `i32` → `Effectful<i32, Op>`
+2. **Wraps function body**: Creates the coroutine automatically
+3. **Enables `perform!`**: Lets you use the convenient effect syntax
+
+**What the `perform!` macro does:**
+1. **Creates the effect**: `Effect::new(operation.into())`
+2. **Yields to handler**: `yield effect`
+3. **Extracts the reply**: `reply.unwrap().take::<ExpectedType>()`
+
+#### Why Use `#[effectful]`?
+
+The explicit approach is educational but impractical for real code:
+
+| **Explicit Approach** | **`#[effectful]` Approach** |
+|----------------------|---------------------------|
+| ❌ **Verbose**: 7 lines per effect | ✅ **Concise**: 1 line per effect |
+| ❌ **Error-prone**: Manual type annotations | ✅ **Safe**: Automatic type inference |
+| ❌ **Repetitive**: Same pattern every time | ✅ **DRY**: Macro handles boilerplate |
+| ❌ **Hard to read**: Focus on mechanics | ✅ **Clear intent**: Focus on business logic |
+| ✅ **Educational**: Shows what's happening | ✅ **Productive**: Gets work done |
+
+**Equivalence guarantee:** Both approaches produce identical `Effectful<R, Op>` values and have the same runtime behavior.
+
+#### Running Effectful Computations
+
+`Effectful<R, Op>` provides methods for execution:
+
+```rust
+let computation = calculate_with_logging(5, 3);
+
+// Method 1: Direct execution with handler
+let result: i32 = computation.run_with(MyHandler::new());
+
+// Method 2: Fluent API (recommended)
+let result: i32 = computation
+    .handle(MyHandler::new())  // Returns Handled<i32, Op, MyHandler>
+    .run();                    // Returns i32
+```
+
+### 🛠️ `Handler<Op>` - Effect Implementations
+
+The `Handler<Op>` trait defines how effects are actually executed. Handlers are the "interpreters" that give meaning to your effect descriptions:
+
+```rust
+pub trait Handler<Op> {
+    fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send>;
 }
 ```
 
-> **📁 Working Example**: See [`examples/advanced.rs`](algae/examples/advanced.rs) for a complete implementation with multiple effect families, error handling, and testing patterns.
+#### Type-Safe Effect Handling
 
-### Handlers as Implementations
-
-Handlers implement the actual behavior for effects:
+Although the return type is type-erased (`Box<dyn Any + Send>`), algae ensures type safety through the effect system:
 
 ```rust
+struct MyHandler {
+    log_count: usize,
+}
+
+impl Handler<Op> for MyHandler {
+    fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
+        match op {
+            // Each branch must return the type specified in the effect! declaration
+            Op::Logger(Logger::Info(msg)) => {
+                println!("INFO: {}", msg);
+                self.log_count += 1;
+                Box::new(())  // Must return () as declared
+            }
+            Op::Math(Math::Add((a, b))) => {
+                Box::new(a + b)  // Must return i32 as declared
+            }
+            Op::FileSystem(FileSystem::Read(path)) => {
+                Box::new(std::fs::read_to_string(path))  // Must return Result<String, std::io::Error>
+            }
+        }
+    }
+}
+```
+
+#### Handler Patterns
+
+**Production Handler:**
+```rust
 struct ProductionHandler {
-    db_connection: DatabaseConnection,
+    db_pool: ConnectionPool,
+    logger: Logger,
 }
 
 impl Handler<Op> for ProductionHandler {
     fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
         match op {
-            Op::FileSystem(FileSystem::Read(path)) => {
-                Box::new(std::fs::read_to_string(path))
-            }
-            Op::FileSystem(FileSystem::Write((path, content))) => {
-                Box::new(std::fs::write(path, content))
-            }
             Op::Database(Database::Query(sql)) => {
-                Box::new(self.db_connection.execute(sql))
+                let rows = self.db_pool.execute(sql).unwrap();
+                Box::new(rows)
             }
             Op::Logger(Logger::Info(msg)) => {
-                log::info!("{}", msg);
+                self.logger.info(msg);
                 Box::new(())
             }
         }
@@ -156,48 +351,242 @@ impl Handler<Op> for ProductionHandler {
 }
 ```
 
-### Testing with Mock Handlers
-
-The same code can be tested with mock implementations:
-
+**Test Handler:**
 ```rust
 struct MockHandler {
-    files: HashMap<String, String>,
-    logs: Vec<String>,
+    db_responses: HashMap<String, Vec<Row>>,
+    logged_messages: Vec<String>,
 }
 
 impl Handler<Op> for MockHandler {
     fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
         match op {
-            Op::FileSystem(FileSystem::Read(path)) => {
-                Box::new(self.files.get(path).cloned()
-                    .ok_or_else(|| std::io::Error::new(
-                        std::io::ErrorKind::NotFound, "File not found"
-                    )))
+            Op::Database(Database::Query(sql)) => {
+                let rows = self.db_responses.get(sql).cloned().unwrap_or_default();
+                Box::new(rows)
             }
             Op::Logger(Logger::Info(msg)) => {
-                self.logs.push(msg.clone());
+                self.logged_messages.push(msg.clone());
                 Box::new(())
             }
-            // ... other operations
+        }
+    }
+}
+```
+
+### ⚡ `Effect<Op>` and `Reply` - The Runtime Types
+
+These are the low-level types that power the effect system. You typically don't use them directly, but understanding them helps you understand how algae works internally.
+
+#### `Effect<Op>` - Effect Requests
+
+An `Effect<Op>` represents a single effect operation that has been requested but not yet handled:
+
+```rust
+pub struct Effect<Op> {
+    pub op: Op,                           // The operation being requested
+    reply: Option<Box<dyn Any + Send>>,   // Storage for the handler's response
+}
+```
+
+```rust
+// Created automatically by perform!() macro
+let effect = Effect::new(Logger::Info("Hello".to_string()));
+
+// Handler fills the effect with a response
+effect.fill_boxed(Box::new(()));
+
+// Extract the response
+let reply = effect.get_reply();
+```
+
+#### `Reply` - Typed Response Extraction
+
+A `Reply` wraps the handler's response and provides type-safe extraction:
+
+```rust
+pub struct Reply {
+    value: Box<dyn Any + Send>,  // Type-erased response from handler
+}
+
+impl Reply {
+    pub fn take<R: Any + Send>(self) -> R {
+        // Runtime type checking + extraction
+        // Panics if types don't match
+    }
+}
+```
+
+```rust
+// Created when extracting from Effect
+let reply: Reply = effect.get_reply();
+
+// Type-safe extraction (must match effect declaration)
+let response: () = reply.take::<()>();  // For Logger::Info -> ()
+let result: i32 = reply.take::<i32>();   // For Math::Add -> i32
+```
+
+### 🔄 The Execution Model
+
+Understanding how algae executes effectful computations helps you write better code and debug issues:
+
+#### 1. Compilation Phase
+
+```rust
+// What you write with the convenient syntax:
+#[effectful]
+fn my_function() -> String {
+    let value: i32 = perform!(Math::Add((2, 3)));
+    format!("Result: {}", value)
+}
+
+// What the macros generate (equivalent to explicit approach):
+fn my_function() -> Effectful<String, Op> {
+    Effectful::new(#[coroutine] move |mut _reply: Option<Reply>| {
+        // perform!(Math::Add((2, 3))) expands to:
+        let value: i32 = {
+            let __eff = Effect::new(Math::Add((2, 3)).into());
+            let __reply_opt = yield __eff;
+            __reply_opt.unwrap().take::<i32>()
+        };
+        format!("Result: {}", value)
+    })
+}
+
+// This is identical to what you'd write explicitly:
+fn my_function_explicit() -> Effectful<String, Op> {
+    Effectful::new(#[coroutine] move |mut _reply: Option<Reply>| {
+        let value: i32 = {
+            let effect = Effect::new(Math::Add((2, 3)).into());
+            let reply_opt = yield effect;
+            reply_opt.unwrap().take::<i32>()
+        };
+        format!("Result: {}", value)
+    })
+}
+```
+
+#### 2. Execution Phase
+
+```rust
+let computation = my_function();
+let result = computation.handle(MyHandler::new()).run();
+```
+
+**Step-by-step execution:**
+
+1. **Start coroutine** with `None` (no previous reply)
+2. **Hit `perform!`** - creates `Effect::new(Math::Add((2, 3)))`
+3. **Yield effect** to handler and suspend coroutine
+4. **Handler processes** `Math::Add((2, 3))` and returns `Box::new(5i32)`
+5. **Fill effect** with handler's response
+6. **Resume coroutine** with `Some(Reply { value: Box::new(5i32) })`
+7. **Extract result** using `reply.take::<i32>()` → `5i32`
+8. **Continue execution** with the extracted value
+9. **Return final result** `"Result: 5"`
+
+#### 3. Type Safety at Runtime
+
+```rust
+// Effect declaration says Math::Add returns i32
+effect! {
+    Math::Add ((i32, i32)) -> i32;
+}
+
+// Handler must return i32 (but as Box<dyn Any + Send>)
+impl Handler<Op> for MyHandler {
+    fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
+        match op {
+            Op::Math(Math::Add((a, b))) => Box::new(a + b), // ✅ Returns i32
+            // Op::Math(Math::Add((a, b))) => Box::new("hello"), // ❌ Would panic at runtime
         }
     }
 }
 
+// perform! expects i32 (enforced at runtime)
+let value: i32 = perform!(Math::Add((2, 3))); // ✅ Type matches
+// let value: String = perform!(Math::Add((2, 3))); // ❌ Would panic at runtime
+```
+
+### 🔗 Type Relationships
+
+Here's how all the types work together:
+
+```rust
+// 1. Effect declaration generates operation types
+effect! {
+    Console::Print (String) -> ();
+    Math::Add ((i32, i32)) -> i32;
+}
+// Generates: Console, Math, Op enums + From impls
+
+// 2. Effectful functions return Effectful<R, Op>
+#[effectful]
+fn interactive_calculator() -> i32 {           // Returns Effectful<i32, Op>
+    let _: () = perform!(Console::Print("Enter numbers...".to_string()));
+    let result: i32 = perform!(Math::Add((5, 3)));
+    result
+}
+
+// 3. Handlers implement behavior for Op
+struct MyHandler;
+impl Handler<Op> for MyHandler { ... }
+
+// 4. Execution ties everything together
+let computation: Effectful<i32, Op> = interactive_calculator();
+let handled: Handled<i32, Op, MyHandler> = computation.handle(MyHandler);
+let result: i32 = handled.run();
+```
+
+### 🧪 Testing Patterns
+
+The type system makes testing effectful code straightforward:
+
+```rust
+#[effectful]
+fn user_workflow() -> String {
+    let _: () = perform!(Logger::Info("Starting workflow".to_string()));
+    let name: String = perform!(Console::ReadLine);
+    let _: () = perform!(Logger::Info(format!("Hello, {}", name)));
+    name
+}
+
 #[test]
-fn test_process_file() {
-    let mut handler = MockHandler::new();
-    handler.files.insert("test.txt".to_string(), "test content".to_string());
+fn test_user_workflow() {
+    struct TestHandler {
+        input: String,
+        logs: Vec<String>,
+    }
     
-    let result = process_file("test.txt".to_string())
-        .handle(handler)
-        .run();
+    impl Handler<Op> for TestHandler {
+        fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
+            match op {
+                Op::Console(Console::ReadLine) => Box::new(self.input.clone()),
+                Op::Logger(Logger::Info(msg)) => {
+                    self.logs.push(msg.clone());
+                    Box::new(())
+                }
+            }
+        }
+    }
     
-    assert!(result.is_ok());
+    let mut handler = TestHandler {
+        input: "Alice".to_string(),
+        logs: Vec::new(),
+    };
+    
+    let result = user_workflow().handle(handler).run();
+    assert_eq!(result, "Alice");
+    // handler.logs contains the logged messages
 }
 ```
 
-> **📁 Working Tests**: See the test modules in [`examples/advanced.rs`](algae/examples/advanced.rs) for complete working test examples.
+This comprehensive type system ensures that:
+- **Effects are declared once** and used consistently
+- **Handlers provide correct return types** (checked at runtime)
+- **Effectful functions get properly typed results** from effects
+- **Testing is straightforward** with mock handlers
+- **Composition is natural** through the trait system
 
 ## 🔗 Theoretical Foundations
 
@@ -345,6 +734,12 @@ Comprehensive roadmap showing where to find all examples, tests, and documentati
 cargo run --example readme
 ```
 Complete, runnable version of the README's introductory example with both real and mock handlers.
+
+### Explicit vs Convenient Syntax
+```bash
+cargo run --example explicit_vs_convenient
+```
+Side-by-side demonstration showing that `#[effectful]` and `perform!` are pure convenience macros that generate identical code to the explicit approach.
 
 ### Advanced Patterns
 ```bash

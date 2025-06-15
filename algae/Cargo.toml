@@ -46,3 +46,7 @@ required-features = ["macros"]
 [[example]]
 name = "minimal"
 required-features = ["macros"]
+
+[[example]]
+name = "explicit_vs_convenient"
+required-features = ["macros"]
