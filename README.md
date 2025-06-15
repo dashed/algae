@@ -646,8 +646,14 @@ implementing custom continuation-passing patterns.
 | **Effect Signature** | `effect!` macro | Declares operations and their types |
 | **Effect Operation** | `perform!(Operation)` | Invokes an effect operation |
 | **Handler** | `Handler<Op>` trait | Provides interpretation for operations |
-| **Handled Computation** | `Effectful<R, Op>` | Computation that may perform effects |
+| **Computation** | `Effectful<R, Op>` | Computation that may perform effects |
+| **Effectful Function** | `fn f() -> T` with `#[effectful]` → `fn f() -> Effectful<T, Op>` | Function that returns a computation |
 | **Handler Installation** | `.handle(h).run()` | Applies handler to computation |
+
+The distinction between effectful functions and computations is important:
+- **Effectful function**: `greet_user()` - A pure function that returns a computation
+- **Computation**: `Effectful<String, Op>` - The value returned by the function, representing effects to be performed
+- **Execution**: `greet_user().handle(h).run()` - Running the computation with a handler
 
 > **📁 Theory in Practice**: See [`examples/theory.rs`](algae/examples/theory.rs) for a complete demonstration of how these theoretical concepts map to working code.
 
