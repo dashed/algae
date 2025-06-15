@@ -64,3 +64,7 @@ required-features = ["macros"]
 [[example]]
 name = "duplicate_root_test"
 required-features = ["macros"]
+
+[[example]]
+name = "test_error_messages"
+required-features = ["macros"]

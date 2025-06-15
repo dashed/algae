@@ -334,13 +334,37 @@ impl Reply {
     /// assert_eq!(result, 42);
     /// ```
     pub fn take<R: Any + Send>(self) -> R {
-        let type_id = (&*self.value as &dyn Any).type_id();
         match self.value.downcast::<R>() {
             Ok(val) => *val,
-            Err(_) => {
-                panic!("Type mismatch when taking reply: expected {}, got {:?}", 
-                    std::any::type_name::<R>(),
-                    type_id);
+            Err(boxed_value) => {
+                let expected_name = std::any::type_name::<R>();
+                
+                // Try to identify some common types to provide better error messages
+                let any_ref = boxed_value.as_ref() as &dyn Any;
+                let actual_type = if any_ref.is::<i32>() {
+                    "i32"
+                } else if any_ref.is::<String>() {
+                    "String"
+                } else if any_ref.is::<()>() {
+                    "()"
+                } else if any_ref.is::<bool>() {
+                    "bool"
+                } else if any_ref.is::<f64>() {
+                    "f64"
+                } else if any_ref.is::<usize>() {
+                    "usize"
+                } else if any_ref.is::<Result<String, String>>() {
+                    "Result<String, String>"
+                } else if any_ref.is::<Result<(), String>>() {
+                    "Result<(), String>"
+                } else if any_ref.is::<Result<i32, String>>() {
+                    "Result<i32, String>"
+                } else {
+                    "<unknown type>"
+                };
+                
+                panic!("Type mismatch when taking reply: expected '{expected_name}', but got '{actual_type}'. \
+                       This usually means the handler returned the wrong type for this effect operation.");
             }
         }
     }
@@ -1625,6 +1649,88 @@ mod tests {
         }));
         
         assert!(result.is_err(), "Expected panic when taking reply with wrong type");
+        
+        // Check that the panic message contains helpful type information
+        if let Err(panic_payload) = result {
+            let panic_message = if let Some(panic_str) = panic_payload.downcast_ref::<&str>() {
+                panic_str.to_string()
+            } else if let Some(panic_string) = panic_payload.downcast_ref::<String>() {
+                panic_string.clone()
+            } else {
+                "Unknown panic message".to_string()
+            };
+            
+            // Should mention both expected and actual types
+            assert!(panic_message.contains("expected 'alloc::string::String'") || 
+                   panic_message.contains("expected 'String'"), 
+                   "Panic message should mention expected type String, got: {}", panic_message);
+            assert!(panic_message.contains("but got 'i32'"), 
+                   "Panic message should mention actual type i32, got: {}", panic_message);
+        }
+    }
+
+    #[test]
+    fn test_reply_take_type_mismatch_common_types() {
+        // Test error messages for various common type mismatches
+        
+        // Test i32 -> String mismatch
+        let mut effect1 = Effect::new(Test::GetValue);
+        effect1.fill_boxed(Box::new(42i32));
+        let reply1 = effect1.get_reply();
+        
+        let result1 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _: String = reply1.take();
+        }));
+        assert!(result1.is_err());
+        
+        // Test String -> i32 mismatch
+        let mut effect2 = Effect::new(Test::GetValue);
+        effect2.fill_boxed(Box::new("hello".to_string()));
+        let reply2 = effect2.get_reply();
+        
+        let result2 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _: i32 = reply2.take();
+        }));
+        assert!(result2.is_err());
+        
+        // Test () -> bool mismatch
+        let mut effect3 = Effect::new(Test::GetValue);
+        effect3.fill_boxed(Box::new(()));
+        let reply3 = effect3.get_reply();
+        
+        let result3 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _: bool = reply3.take();
+        }));
+        assert!(result3.is_err());
+    }
+
+    #[test]
+    fn test_reply_take_result_type_mismatch() {
+        // Test error messages for Result type mismatches (common in algae)
+        let mut effect = Effect::new(Test::GetValue);
+        effect.fill_boxed(Box::new(Ok::<String, String>("success".to_string())));
+        let reply = effect.get_reply();
+        
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _: Result<i32, String> = reply.take();
+        }));
+        
+        assert!(result.is_err(), "Expected panic when taking Result with wrong type");
+        
+        // Check that the panic message mentions Result types
+        if let Err(panic_payload) = result {
+            let panic_message = if let Some(panic_str) = panic_payload.downcast_ref::<&str>() {
+                panic_str.to_string()
+            } else if let Some(panic_string) = panic_payload.downcast_ref::<String>() {
+                panic_string.clone()
+            } else {
+                "Unknown panic message".to_string()
+            };
+            
+            // Should mention Result types
+            assert!(panic_message.contains("Result") && panic_message.contains("String"),
+                   "Panic message should mention Result types, got: {}", panic_message);
+        }
     }
 
     #[test]
