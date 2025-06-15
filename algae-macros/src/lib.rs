@@ -115,42 +115,106 @@ impl Parse for OpLine {
     }
 }
 
-/// The whole macro input – just a list of OpLines separated by `;` or `,`.
+/// The whole macro input – optional root header plus list of OpLines separated by `;` or `,`.
 struct EffectInput {
+    root_ident: Option<Ident>,
     lines: Punctuated<OpLine, Token![;]>, // accept `;`  – we strip trailing ones.
 }
 
 impl Parse for EffectInput {
     fn parse(input: ParseStream<'_>) -> Result<Self> {
+        // Try to parse optional "root EnumName;" header
+        let root_ident = if input.peek(syn::Ident) {
+            // Fork the input to check if this starts with "root"
+            let fork = input.fork();
+            if let Ok(ident) = fork.parse::<Ident>() {
+                if ident == "root" {
+                    // Consume the "root" keyword
+                    let _root_kw: Ident = input.parse()?;
+                    // Parse the root enum name
+                    let root_name: Ident = input.parse()?;
+                    // Consume the semicolon
+                    input.parse::<Token![;]>()?;
+                    Some(root_name)
+                } else {
+                    // This is just a regular effect line starting with Family::
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
         let lines = Punctuated::<OpLine, Token![;]>::parse_terminated(input)?;
-        Ok(Self { lines })
+        Ok(Self { root_ident, lines })
     }
 }
 
 /// Defines effect families and their operations.
 ///
 /// The `effect!` macro is used to declare the effects that your program can perform.
-/// It generates enums for each effect family and a unified `Op` enum that combines
+/// It generates enums for each effect family and a unified root enum (default `Op`) that combines
 /// all families. Each operation specifies its parameter types and return type.
+///
+/// ## Custom Root Enum Names
+///
+/// You can specify a custom name for the root enum using the `root EnumName;` syntax.
+/// This allows multiple `effect!` declarations in the same module without conflicts:
 ///
 /// # Syntax
 ///
 /// ```text
+/// // Default syntax (root enum named "Op")
 /// effect! {
 ///     Family::Operation (ParameterType) -> ReturnType;
 ///     Family::Operation -> ReturnType;  // No parameters
 ///     Family::Operation (TupleType) -> ReturnType;  // Multiple parameters as tuple
 /// }
+///
+/// // Custom root enum name
+/// effect! {
+///     root CustomOp;
+///     Family::Operation (ParameterType) -> ReturnType;
+///     Family::Operation -> ReturnType;
+/// }
 /// ```
+///
+/// ## Multiple Effects in Same Module
+///
+/// The `root EnumName;` syntax prevents conflicts when multiple `effect!` declarations
+/// exist in the same module:
+///
+/// ```ignore
+/// # use algae::prelude::*;
+/// // First effect with custom root
+/// effect! {
+///     root ConsoleOp;
+///     Console::Print (String) -> ();
+///     Console::ReadLine -> String;
+/// }
+///
+/// // Second effect with different custom root
+/// effect! {
+///     root FileOp;
+///     File::Read (String) -> String;
+///     File::Write ((String, String)) -> ();
+/// }
+/// ```
+///
+/// Without custom root names, the above would cause a compilation error due to
+/// duplicate `Op` enum definitions.
 ///
 /// # Generated Code
 ///
 /// For each effect family, this macro generates:
 /// - A family enum with variants for each operation
-/// - A unified `Op` enum that contains all families
-/// - `From` implementations to convert family enums to `Op`
+/// - A unified root enum (default `Op` or custom name) that contains all families
+/// - `From` implementations to convert family enums to the root enum
 /// - `Default` implementations where applicable
 /// - Debug derive implementations
+/// - A hidden sentry enum to detect duplicate root names
 ///
 /// # Examples
 ///
@@ -224,7 +288,14 @@ impl Parse for EffectInput {
 /// ```
 #[proc_macro]
 pub fn effect(item: TokenStream) -> TokenStream {
-    let EffectInput { lines } = parse_macro_input!(item as EffectInput);
+    let EffectInput { root_ident, lines } = parse_macro_input!(item as EffectInput);
+    
+    // Determine the root enum name (default to "Op")
+    let root_ident = root_ident.unwrap_or_else(|| Ident::new("Op", proc_macro2::Span::call_site()));
+    
+    // Generate sentry enum to catch duplicate root names
+    let sentry_name = format!("__ALGAE_EFFECT_SENTRY_FOR_{}", root_ident);
+    let sentry_ident = Ident::new(&sentry_name, proc_macro2::Span::call_site());
 
     // ── 1.  Group lines by family ────────────────────────────────────────────
     #[derive(Clone)]
@@ -299,17 +370,17 @@ pub fn effect(item: TokenStream) -> TokenStream {
             #family_default
         });
 
-        // Op::Family(Family)
+        // RootEnum::Family(Family)
         op_variants.extend(quote! { #family_ident(#family_ident), });
 
         impl_froms.extend(quote! {
-            impl From<#family_ident> for Op {
-                fn from(f: #family_ident) -> Self { Op::#family_ident(f) }
+            impl From<#family_ident> for #root_ident {
+                fn from(f: #family_ident) -> Self { #root_ident::#family_ident(f) }
             }
         });
     }
 
-    // ── 3.  Root enum `Op` ───────────────────────────────────────────────────
+    // ── 3.  Root enum (configurable name) ────────────────────────────────────
     
     // For Default implementation, we need to pick the first family and first variant
     let default_impl = if let Some((family_ident, variants)) = first_family {
@@ -317,17 +388,17 @@ pub fn effect(item: TokenStream) -> TokenStream {
             let variant = &first_variant.variant;
             if first_variant.payload.is_some() {
                 quote! {
-                    impl Default for Op {
+                    impl Default for #root_ident {
                         fn default() -> Self {
-                            Op::#family_ident(#family_ident::#variant(Default::default()))
+                            #root_ident::#family_ident(#family_ident::#variant(Default::default()))
                         }
                     }
                 }
             } else {
                 quote! {
-                    impl Default for Op {
+                    impl Default for #root_ident {
                         fn default() -> Self {
-                            Op::#family_ident(#family_ident::#variant)
+                            #root_ident::#family_ident(#family_ident::#variant)
                         }
                     }
                 }
@@ -340,10 +411,15 @@ pub fn effect(item: TokenStream) -> TokenStream {
     };
     
     let output = quote! {
+        // Sentry enum to detect duplicate root names in same module
+        #[doc(hidden)]
+        #[allow(non_camel_case_types)]
+        enum #sentry_ident {}
+
         #family_enums
 
         #[derive(Debug)]
-        pub enum Op {
+        pub enum #root_ident {
             #op_variants
         }
 

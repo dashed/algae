@@ -777,6 +777,82 @@ pub mod prelude {
     pub use algae_macros::{effect, effectful, perform};
 }
 
+/// Helper macro for combining multiple root enums into one unified enum.
+///
+/// This macro allows you to merge effect operations from different modules
+/// that use custom root enum names into a single root enum for easier handling.
+///
+/// # Syntax
+///
+/// ```ignore
+/// combine_roots!(pub Op = module_a::ConsoleOp, module_b::FileOp, module_c::NetOp);
+/// ```
+///
+/// This generates:
+/// - A new enum with the specified name containing all the other enums as variants
+/// - `From` implementations to convert each source enum to the combined enum
+///
+/// # Example
+///
+/// ```ignore
+/// mod console {
+///     use algae::prelude::*;
+///     effect! {
+///         root ConsoleOp;
+///         Console::Print (String) -> ();
+///         Console::ReadLine -> String;
+///     }
+/// }
+///
+/// mod file {
+///     use algae::prelude::*;
+///     effect! {
+///         root FileOp;
+///         File::Read (String) -> String;
+///         File::Write ((String, String)) -> ();
+///     }
+/// }
+///
+/// // Combine them into a unified root enum
+/// combine_roots!(pub Op = console::ConsoleOp, file::FileOp);
+///
+/// // Now you can write handlers for the unified Op enum
+/// struct UnifiedHandler;
+/// impl Handler<Op> for UnifiedHandler {
+///     fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
+///         match op {
+///             Op::ConsoleOp(console_op) => {
+///                 // Handle console operations
+///             }
+///             Op::FileOp(file_op) => {
+///                 // Handle file operations  
+///             }
+///         }
+///     }
+/// }
+/// ```
+#[macro_export]
+macro_rules! combine_roots {
+    ( $vis:vis $root:ident = $( $path:ident ),+ $(,)? ) => {
+        #[derive(Debug)]
+        $vis enum $root { 
+            $( $path($path) ),+ 
+        }
+
+        $(
+            impl From<$path> for $root { 
+                fn from(f: $path) -> Self { 
+                    $root::$path(f) 
+                } 
+            }
+        )+
+        
+        // Note: Default implementation is not automatically generated
+        // Users should implement Default manually if needed, as it's unclear
+        // which variant should be the default when combining multiple enums
+    };
+}
+
 #[cfg(all(test, feature = "macros"))]
 mod tests {
     use crate as algae;
@@ -1314,5 +1390,180 @@ mod tests {
         assert_eq!(vec, vec![1, 2, 3, 4, 5]);
         assert_eq!(map.get("a"), Some(&1));
         assert_eq!(map.get("b"), Some(&2));
+    }
+
+    // ============================================================================
+    // Custom Root Enum Tests
+    // ============================================================================
+
+    mod custom_root_tests {
+        use super::*;
+
+        // Test effect with custom root name
+        effect! {
+            root CustomOp;
+            Custom::GetValue -> i32;
+            Custom::SetValue (i32) -> ();
+        }
+
+        // Another effect with different custom root name
+        effect! {
+            root AnotherOp;
+            Another::GetString -> String;
+            Another::SetString (String) -> ();
+        }
+
+        struct CustomHandler {
+            value: i32,
+        }
+
+        impl Handler<CustomOp> for CustomHandler {
+            fn handle(&mut self, op: &CustomOp) -> Box<dyn std::any::Any + Send> {
+                match op {
+                    CustomOp::Custom(Custom::GetValue) => Box::new(self.value),
+                    CustomOp::Custom(Custom::SetValue(val)) => {
+                        self.value = *val;
+                        Box::new(())
+                    }
+                }
+            }
+        }
+
+        struct AnotherHandler {
+            text: String,
+        }
+
+        impl Handler<AnotherOp> for AnotherHandler {
+            fn handle(&mut self, op: &AnotherOp) -> Box<dyn std::any::Any + Send> {
+                match op {
+                    AnotherOp::Another(Another::GetString) => Box::new(self.text.clone()),
+                    AnotherOp::Another(Another::SetString(text)) => {
+                        self.text = text.clone();
+                        Box::new(())
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn test_custom_root_basic() {
+            fn test_computation() -> algae::Effectful<i32, CustomOp> {
+                algae::Effectful::new(#[coroutine] move |mut _reply: Option<algae::Reply>| {
+                    // Get current value
+                    let current: i32 = {
+                        let effect = algae::Effect::new(Custom::GetValue.into());
+                        let reply_opt = yield effect;
+                        reply_opt.unwrap().take::<i32>()
+                    };
+
+                    // Set new value
+                    {
+                        let effect = algae::Effect::new(Custom::SetValue(current + 10).into());
+                        let reply_opt = yield effect;
+                        let _: () = reply_opt.unwrap().take::<()>();
+                    }
+
+                    // Get updated value
+                    let updated: i32 = {
+                        let effect = algae::Effect::new(Custom::GetValue.into());
+                        let reply_opt = yield effect;
+                        reply_opt.unwrap().take::<i32>()
+                    };
+
+                    updated
+                })
+            }
+
+            let result = test_computation()
+                .handle(CustomHandler { value: 5 })
+                .run();
+
+            assert_eq!(result, 15);
+        }
+
+        #[test]
+        fn test_another_custom_root() {
+            fn string_computation() -> algae::Effectful<String, AnotherOp> {
+                algae::Effectful::new(#[coroutine] move |mut _reply: Option<algae::Reply>| {
+                    // Get current string
+                    let current: String = {
+                        let effect = algae::Effect::new(Another::GetString.into());
+                        let reply_opt = yield effect;
+                        reply_opt.unwrap().take::<String>()
+                    };
+
+                    // Set new string
+                    {
+                        let effect = algae::Effect::new(Another::SetString(format!("{} world!", current)).into());
+                        let reply_opt = yield effect;
+                        let _: () = reply_opt.unwrap().take::<()>();
+                    }
+
+                    // Get updated string
+                    let updated: String = {
+                        let effect = algae::Effect::new(Another::GetString.into());
+                        let reply_opt = yield effect;
+                        reply_opt.unwrap().take::<String>()
+                    };
+
+                    updated
+                })
+            }
+
+            let result = string_computation()
+                .handle(AnotherHandler { text: "Hello".to_string() })
+                .run();
+
+            assert_eq!(result, "Hello world!");
+        }
+
+        // Test the combine_roots! macro
+        algae::combine_roots!(CombinedOp = CustomOp, AnotherOp);
+
+        struct CombinedHandler {
+            custom: CustomHandler,
+            another: AnotherHandler,
+        }
+
+        impl Handler<CombinedOp> for CombinedHandler {
+            fn handle(&mut self, op: &CombinedOp) -> Box<dyn std::any::Any + Send> {
+                match op {
+                    CombinedOp::CustomOp(custom_op) => self.custom.handle(custom_op),
+                    CombinedOp::AnotherOp(another_op) => self.another.handle(another_op),
+                }
+            }
+        }
+
+        #[test]
+        fn test_combine_roots() {
+            fn combined_computation() -> algae::Effectful<String, CombinedOp> {
+                algae::Effectful::new(#[coroutine] move |mut _reply: Option<algae::Reply>| {
+                    // Use custom effect
+                    let value: i32 = {
+                        let effect = algae::Effect::new(CombinedOp::CustomOp(Custom::GetValue.into()));
+                        let reply_opt = yield effect;
+                        reply_opt.unwrap().take::<i32>()
+                    };
+
+                    // Use another effect
+                    let text: String = {
+                        let effect = algae::Effect::new(CombinedOp::AnotherOp(Another::GetString.into()));
+                        let reply_opt = yield effect;
+                        reply_opt.unwrap().take::<String>()
+                    };
+
+                    format!("{}: {}", text, value)
+                })
+            }
+
+            let result = combined_computation()
+                .handle(CombinedHandler {
+                    custom: CustomHandler { value: 42 },
+                    another: AnotherHandler { text: "Test".to_string() },
+                })
+                .run();
+
+            assert_eq!(result, "Test: 42");
+        }
     }
 }

@@ -747,6 +747,12 @@ cargo run --example multiple_effects_demo
 ```
 Comprehensive guide to organizing multiple effects: single declaration vs module separation, with trade-offs and best practices.
 
+### Custom Root Effects  
+```bash
+cargo run --example custom_root_effects
+```
+Demonstrates the new custom root enum functionality: avoiding conflicts, combining roots, and managing multiple effect declarations in one module.
+
 ### Advanced Patterns
 ```bash
 cargo run --example advanced
@@ -1051,9 +1057,57 @@ pub enum Op {
 }
 ```
 
-#### ❌ Not Supported: Multiple `effect!` in Same Scope
+#### ✅ New: Custom Root Enum Names
 
-This will **not** work and causes compilation errors:
+You can now use multiple `effect!` declarations in the same module by specifying custom root enum names:
+
+```rust
+// ✅ Works with custom root names
+effect! {
+    root ConsoleOp;
+    Console::Print (String) -> ();
+    Console::ReadLine -> String;
+}
+
+effect! {
+    root FileOp;
+    File::Read (String) -> Result<String, String>;
+    File::Write ((String, String)) -> Result<(), String>;
+}
+
+effect! {
+    root NetworkOp;
+    Http::Get (String) -> Result<String, String>;
+    Http::Post ((String, String)) -> Result<String, String>;
+}
+```
+
+Each generates its own root enum:
+- `ConsoleOp` containing `Console` variants
+- `FileOp` containing `File` variants  
+- `NetworkOp` containing `Http` variants
+
+You can then combine them using the `combine_roots!` macro:
+
+```rust
+// Combine multiple root enums into one
+algae::combine_roots!(pub Op = ConsoleOp, FileOp, NetworkOp);
+
+// Now you can write unified handlers
+impl Handler<Op> for UnifiedHandler {
+    fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
+        match op {
+            Op::ConsoleOp(console_op) => self.console_handler.handle(console_op),
+            Op::FileOp(file_op) => self.file_handler.handle(file_op),
+            Op::NetworkOp(network_op) => self.network_handler.handle(network_op),
+        }
+    }
+}
+```
+
+#### ❌ Error Detection: Duplicate Root Names
+
+Attempting to use duplicate root names (including the default `Op`) in the same scope will produce clear error messages:
 
 ```rust
 // ❌ ERROR: Conflicting Op enum definitions
