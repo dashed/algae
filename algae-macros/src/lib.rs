@@ -128,7 +128,7 @@ impl Parse for EffectInput {
             // Fork the input to check if this starts with "root"
             let fork = input.fork();
             if let Ok(ident) = fork.parse::<Ident>() {
-                if ident == "root" {
+                if ident.to_string().as_str() == "root" {
                     // Consume the "root" keyword
                     let _root_kw: Ident = input.parse()?;
                     // Parse the root enum name
@@ -742,4 +742,171 @@ pub fn perform(ts: TokenStream) -> TokenStream {
         __reply_opt.unwrap().take::<_>()
     }}
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use syn::parse_quote;
+
+    #[test]
+    fn test_effect_input_parsing_without_root() {
+        // Test parsing effect! without root header
+        let input: EffectInput = parse_quote! {
+            Test::GetValue -> i32;
+            Test::SetValue (i32) -> ();
+        };
+        
+        assert!(input.root_ident.is_none());
+        assert_eq!(input.lines.len(), 2);
+    }
+
+    #[test]
+    fn test_effect_input_parsing_with_root() {
+        // Test parsing effect! with custom root header
+        let input: EffectInput = parse_quote! {
+            root CustomOp;
+            Test::GetValue -> i32;
+            Test::SetValue (i32) -> ();
+        };
+        
+        assert!(input.root_ident.is_some());
+        assert_eq!(input.root_ident.unwrap().to_string(), "CustomOp");
+        assert_eq!(input.lines.len(), 2);
+    }
+
+    #[test]
+    fn test_effect_input_parsing_root_keyword_comparison() {
+        // Test that "root" keyword is properly identified using string comparison
+        let input: EffectInput = parse_quote! {
+            root MyEffectOp;
+            Console::Print (String) -> ();
+        };
+        
+        assert!(input.root_ident.is_some());
+        assert_eq!(input.root_ident.unwrap().to_string(), "MyEffectOp");
+        assert_eq!(input.lines.len(), 1);
+    }
+
+    #[test]
+    fn test_effect_input_parsing_not_root_keyword() {
+        // Test that regular effect lines starting with identifiers are not confused with root
+        let input: EffectInput = parse_quote! {
+            Router::Navigate (String) -> ();
+            Router::Back -> ();
+        };
+        
+        assert!(input.root_ident.is_none());
+        assert_eq!(input.lines.len(), 2);
+        
+        // Verify first line is parsed as Router::Navigate
+        let first_line = &input.lines[0];
+        assert_eq!(first_line.family.to_string(), "Router");
+        assert_eq!(first_line.variant.to_string(), "Navigate");
+    }
+
+    #[test]
+    fn test_effect_input_parsing_empty() {
+        // Test parsing empty effect! (should work)
+        let input: EffectInput = parse_quote! {};
+        
+        assert!(input.root_ident.is_none());
+        assert_eq!(input.lines.len(), 0);
+    }
+
+    #[test]
+    fn test_effect_input_parsing_root_only() {
+        // Test parsing effect! with only root header
+        let input: EffectInput = parse_quote! {
+            root OnlyRootOp;
+        };
+        
+        assert!(input.root_ident.is_some());
+        assert_eq!(input.root_ident.unwrap().to_string(), "OnlyRootOp");
+        assert_eq!(input.lines.len(), 0);
+    }
+
+    #[test]
+    fn test_effect_input_parsing_complex_types() {
+        // Test parsing with complex types and custom root
+        let input: EffectInput = parse_quote! {
+            root DatabaseOp;
+            Db::Query (String) -> Result<Vec<Row>, DbError>;
+            Db::Execute (String) -> Result<u64, DbError>;
+        };
+        
+        assert!(input.root_ident.is_some());
+        assert_eq!(input.root_ident.unwrap().to_string(), "DatabaseOp");
+        assert_eq!(input.lines.len(), 2);
+    }
+
+    #[test] 
+    fn test_op_line_parsing() {
+        // Test individual OpLine parsing
+        let op_line: OpLine = parse_quote! {
+            Family::Variant (String) -> Result<i32, String>
+        };
+        
+        assert_eq!(op_line.family.to_string(), "Family");
+        assert_eq!(op_line.variant.to_string(), "Variant");
+        assert!(op_line.payload.is_some());
+    }
+
+    #[test]
+    fn test_op_line_parsing_no_payload() {
+        // Test OpLine parsing without payload
+        let op_line: OpLine = parse_quote! {
+            Family::Variant -> i32
+        };
+        
+        assert_eq!(op_line.family.to_string(), "Family");
+        assert_eq!(op_line.variant.to_string(), "Variant");
+        assert!(op_line.payload.is_none());
+    }
+
+    #[test]
+    fn test_op_line_parsing_empty_payload() {
+        // Test OpLine parsing with empty payload ()
+        let op_line: OpLine = parse_quote! {
+            Family::Variant () -> i32
+        };
+        
+        assert_eq!(op_line.family.to_string(), "Family");
+        assert_eq!(op_line.variant.to_string(), "Variant");
+        assert!(op_line.payload.is_none()); // Empty () becomes None
+    }
+
+    #[test]
+    fn test_effect_input_parsing_root_like_identifier() {
+        // Test that identifiers similar to "root" are not confused with the root keyword
+        let input: EffectInput = parse_quote! {
+            roots::Grow (String) -> ();
+            rooter::Execute -> i32;
+        };
+        
+        assert!(input.root_ident.is_none());
+        assert_eq!(input.lines.len(), 2);
+        
+        // Verify first line is parsed as roots::Grow (not confused with "root" keyword)
+        let first_line = &input.lines[0];
+        assert_eq!(first_line.family.to_string(), "roots");
+        assert_eq!(first_line.variant.to_string(), "Grow");
+    }
+
+    #[test]
+    fn test_effect_input_parsing_root_keyword_case_sensitivity() {
+        // Test that only exactly "root" (not "ROOT" or "Root") is recognized
+        let input: EffectInput = parse_quote! {
+            ROOT::GetValue -> i32;
+            Root::SetValue (i32) -> ();
+        };
+        
+        assert!(input.root_ident.is_none());
+        assert_eq!(input.lines.len(), 2);
+        
+        // These should be parsed as regular effect lines, not root headers
+        let first_line = &input.lines[0];
+        assert_eq!(first_line.family.to_string(), "ROOT");
+        assert_eq!(first_line.variant.to_string(), "GetValue");
+    }
 }
