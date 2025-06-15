@@ -1,7 +1,7 @@
 # Algae - Algebraic Effects for Rust 🦀
 
-[![Crates.io](https://img.shields.io/crates/v/algae.svg)](https://crates.io/crates/algae)
-[![Documentation](https://docs.rs/algae/badge.svg)](https://docs.rs/algae)
+<!-- [![Crates.io](https://img.shields.io/crates/v/algae.svg)](https://crates.io/crates/algae) -->
+<!-- [![Documentation](https://docs.rs/algae/badge.svg)](https://docs.rs/algae) -->
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **Algae** is a Rust library that brings the power of algebraic effects to systems programming. It provides a clean, type-safe way to handle side effects in your programs while maintaining composability, testability, and performance.
@@ -25,9 +25,18 @@ Algebraic effects are a programming paradigm that allows you to separate the **d
 
 Add algae to your `Cargo.toml`:
 
+> **⚠️ Note**: Algae is not yet published to Crates.io. For now, you'll need to use it as a Git dependency:
+
 ```toml
 [dependencies]
-algae = "0.1.0"
+algae = { git = "https://github.com/your-username/algae.git" }
+```
+
+Or clone the repository and use it as a local dependency:
+
+```toml
+[dependencies]
+algae = { path = "../algae" }
 ```
 
 Enable the required nightly features in your `src/main.rs` or `lib.rs`:
