@@ -78,6 +78,10 @@ doc: ## Build documentation
 	@echo "$(BOLD)$(CYAN)Building documentation...$(RESET)"
 	@cargo doc --no-deps --all-features
 
+doc-strict: ## Build documentation with warnings as errors
+	@echo "$(BOLD)$(CYAN)Building documentation (strict)...$(RESET)"
+	@RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
+
 doc-open: ## Build and open documentation in browser
 	@echo "$(BOLD)$(CYAN)Building and opening documentation...$(RESET)"
 	@cargo doc --no-deps --all-features --open
@@ -167,7 +171,7 @@ ci-local: ## Run the complete CI pipeline locally
 	@$(MAKE) test-error-detection
 	@echo ""
 	@echo "$(BOLD)$(YELLOW)Step 6: Build documentation$(RESET)"
-	@$(MAKE) doc
+	@$(MAKE) doc-strict
 	@echo ""
 	@echo "$(BOLD)$(GREEN)🎉 All CI checks passed!$(RESET)"
 

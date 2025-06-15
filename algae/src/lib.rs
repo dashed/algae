@@ -744,9 +744,9 @@ pub trait Handler<Op> {
 /// - [`Reply`] - Container for handler response values
 ///
 /// ## Macros (when "macros" feature is enabled)
-/// - [`effect!`] - Macro for defining effect families and operations
-/// - [`effectful`] - Attribute macro for marking functions as effectful
-/// - [`perform!`] - Macro for performing effects within effectful functions
+/// - `effect!` - Macro for defining effect families and operations
+/// - `effectful` - Attribute macro for marking functions as effectful
+/// - `perform!` - Macro for performing effects within effectful functions
 ///
 /// # Examples
 ///
