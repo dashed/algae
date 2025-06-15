@@ -59,11 +59,6 @@ required-features = ["macros"]
 name = "custom_root_effects"
 required-features = ["macros"]
 
-# Note: This example intentionally fails to compile to demonstrate error handling
-# Run with: cargo check --example duplicate_root_test
-[[example]]
-name = "duplicate_root_test"
-required-features = ["macros"]
 
 [[example]]
 name = "test_error_messages"

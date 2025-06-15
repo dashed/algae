@@ -4,6 +4,7 @@
 //! using `.begin_chain().handle().handle().handle()`.
 
 #![feature(coroutines, coroutine_trait, yield_expr)]
+use algae::impl_into_vec_handler;
 use algae::prelude::*;
 
 // Define our effects
@@ -79,6 +80,11 @@ impl PartialHandler<Op> for CacheHandler {
         }
     }
 }
+
+// Implement IntoVecHandler for all our handlers
+impl_into_vec_handler!(AuthHandler, Op);
+impl_into_vec_handler!(DatabaseHandler, Op);
+impl_into_vec_handler!(CacheHandler, Op);
 
 // Application logic
 #[effectful]

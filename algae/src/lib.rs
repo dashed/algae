@@ -1100,6 +1100,17 @@ impl<Op> VecHandler<Op> {
     {
         self.inner.push(Box::new(h));
     }
+
+    /// Extends this handler collection with all handlers from another VecHandler.
+    ///
+    /// This flattens the handlers from `other` into this collection, avoiding nesting.
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - The VecHandler whose handlers to add
+    pub fn extend_from(&mut self, other: VecHandler<Op>) {
+        self.inner.extend(other.inner);
+    }
 }
 
 impl<Op> Default for VecHandler<Op> {
@@ -1211,6 +1222,42 @@ where
     }
 }
 
+/// Trait for converting any handler into a VecHandler for flattening
+pub trait IntoVecHandler<Op> {
+    /// Convert this handler into a VecHandler
+    fn into_vec_handler(self) -> VecHandler<Op>;
+}
+
+// Implementation for VecHandler - return as-is (already flat)
+impl<Op> IntoVecHandler<Op> for VecHandler<Op> {
+    fn into_vec_handler(self) -> VecHandler<Op> {
+        self
+    }
+}
+
+// Implementation for Box<dyn PartialHandler> - wrap in VecHandler
+impl<Op> IntoVecHandler<Op> for Box<dyn PartialHandler<Op> + Send> {
+    fn into_vec_handler(self) -> VecHandler<Op> {
+        let mut vec = VecHandler::new();
+        vec.inner.push(self);
+        vec
+    }
+}
+
+/// Macro to implement IntoVecHandler for a type that implements PartialHandler
+#[macro_export]
+macro_rules! impl_into_vec_handler {
+    ($handler:ty, $op:ty) => {
+        impl $crate::IntoVecHandler<$op> for $handler {
+            fn into_vec_handler(self) -> $crate::VecHandler<$op> {
+                let mut vec = $crate::VecHandler::new();
+                vec.push(self);
+                vec
+            }
+        }
+    };
+}
+
 /// Wrapper to make Handler trait implement PartialHandler  
 pub struct HandlerWrapper<Op, H> {
     handler: H,
@@ -1240,13 +1287,19 @@ impl<R, Op: 'static + Send> Handled<R, Op, VecHandler<Op>> {
     /// Adds another handler to an existing VecHandler chain.
     ///
     /// This specialized implementation efficiently adds to an existing VecHandler
-    /// without creating a new one.
-    pub fn handle<H2>(mut self, h2: H2) -> Handled<R, Op, VecHandler<Op>>
+    /// without creating a new one. If the added handler is itself a VecHandler,
+    /// its contents are flattened into the existing collection.
+    pub fn handle<H2>(self, h2: H2) -> Handled<R, Op, VecHandler<Op>>
     where
-        H2: PartialHandler<Op> + Send + 'static,
+        H2: IntoVecHandler<Op>,
     {
-        self.h.push(h2);
-        self
+        let mut result = self.h;
+        let other = h2.into_vec_handler();
+        result.extend_from(other);
+        Handled {
+            eff: self.eff,
+            h: result,
+        }
     }
 
     /// Adds a total handler to an existing VecHandler chain.
@@ -1279,6 +1332,7 @@ impl<R, Op: 'static + Send> Handled<R, Op, VecHandler<Op>> {
 /// - [`UnhandledOp`] - Error returned when no handler handles an operation
 /// - [`UnhandledOpError`] - Lightweight error with just operation name
 /// - [`IntoPartialHandler`] - Trait for converting handlers to PartialHandler
+/// - [`IntoVecHandler`] - Trait for converting handlers to VecHandler with flattening
 ///
 /// ## Macros (when "macros" feature is enabled)
 /// - `effect!` - Macro for defining effect families and operations
@@ -1333,8 +1387,8 @@ impl<R, Op: 'static + Send> Handled<R, Op, VecHandler<Op>> {
 /// your effect types and handlers manually using the core types.
 pub mod prelude {
     pub use crate::{
-        Effect, Effectful, Handler, HandlerWrapper, IntoPartialHandler, PartialHandler, Reply,
-        UnhandledOp, UnhandledOpError, VecHandler,
+        Effect, Effectful, Handler, HandlerWrapper, IntoPartialHandler, IntoVecHandler,
+        PartialHandler, Reply, UnhandledOp, UnhandledOpError, VecHandler,
     };
 
     #[cfg(feature = "macros")]
@@ -3022,6 +3076,13 @@ mod tests {
                 }
             }
         }
+        impl IntoVecHandler<Op> for Handler1 {
+            fn into_vec_handler(self) -> VecHandler<Op> {
+                let mut vec = VecHandler::new();
+                vec.push(self);
+                vec
+            }
+        }
 
         struct Handler2;
         impl PartialHandler<Op> for Handler2 {
@@ -3030,6 +3091,13 @@ mod tests {
                     Op::Math(Math::Multiply((a, b))) => Some(Box::new(a * b)),
                     _ => None,
                 }
+            }
+        }
+        impl IntoVecHandler<Op> for Handler2 {
+            fn into_vec_handler(self) -> VecHandler<Op> {
+                let mut vec = VecHandler::new();
+                vec.push(self);
+                vec
             }
         }
 
@@ -3044,6 +3112,13 @@ mod tests {
                     }
                     _ => None,
                 }
+            }
+        }
+        impl IntoVecHandler<Op> for Handler3 {
+            fn into_vec_handler(self) -> VecHandler<Op> {
+                let mut vec = VecHandler::new();
+                vec.push(self);
+                vec
             }
         }
 
@@ -3089,5 +3164,81 @@ mod tests {
             Err(UnhandledOp(Op::Logger(Logger::Info(_)))) => (),
             _ => panic!("Expected unhandled Logger::Info operation"),
         }
+    }
+
+    #[test]
+    fn test_vec_handler_flattening() {
+        // Test that VecHandlers are properly flattened when chained
+        struct Handler1;
+        impl PartialHandler<Op> for Handler1 {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
+                    _ => None,
+                }
+            }
+        }
+        impl IntoVecHandler<Op> for Handler1 {
+            fn into_vec_handler(self) -> VecHandler<Op> {
+                let mut vec = VecHandler::new();
+                vec.push(self);
+                vec
+            }
+        }
+
+        struct Handler2;
+        impl PartialHandler<Op> for Handler2 {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Multiply((a, b))) => Some(Box::new(a * b)),
+                    _ => None,
+                }
+            }
+        }
+        impl IntoVecHandler<Op> for Handler2 {
+            fn into_vec_handler(self) -> VecHandler<Op> {
+                let mut vec = VecHandler::new();
+                vec.push(self);
+                vec
+            }
+        }
+
+        #[effectful]
+        fn test_computation() -> i32 {
+            let sum: i32 = perform!(Math::Add((10, 20)));
+            let product: i32 = perform!(Math::Multiply((sum, 2)));
+            product
+        }
+
+        // Create a VecHandler with Handler1
+        let mut vec1 = VecHandler::new();
+        vec1.push(Handler1);
+
+        // Create another VecHandler with Handler2
+        let mut vec2 = VecHandler::new();
+        vec2.push(Handler2);
+
+        // Chain them together - this should flatten
+        let result = test_computation()
+            .begin_chain()
+            .handle(vec1)
+            .handle(vec2)
+            .run_checked();
+
+        assert_eq!(result.unwrap(), 60); // (10 + 20) * 2 = 60
+
+        // Verify that nesting VecHandlers still works
+        let mut outer_vec = VecHandler::new();
+        outer_vec.push(Handler1);
+
+        let mut inner_vec = VecHandler::new();
+        inner_vec.push(Handler2);
+
+        let result = test_computation()
+            .handle(outer_vec)
+            .handle(inner_vec)
+            .run_checked();
+
+        assert_eq!(result.unwrap(), 60);
     }
 }

@@ -5,6 +5,7 @@
 //! - Building up handler chains incrementally
 
 #![feature(coroutines, coroutine_trait, yield_expr)]
+use algae::impl_into_vec_handler;
 use algae::prelude::*;
 
 // Define our effects
@@ -63,6 +64,11 @@ impl PartialHandler<Op> for LoggerHandler {
         }
     }
 }
+
+// Implement IntoVecHandler for all our handlers
+impl_into_vec_handler!(ConsoleHandler, Op);
+impl_into_vec_handler!(FileHandler, Op);
+impl_into_vec_handler!(LoggerHandler, Op);
 
 #[effectful]
 fn chained_computation() -> String {
