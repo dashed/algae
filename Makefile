@@ -124,6 +124,10 @@ examples: ## Check that all working examples compile
 	@cargo check --example test_non_default_payload
 	@echo "$(YELLOW)✓$(RESET) test_manual_default"
 	@cargo check --example test_manual_default
+	@echo "$(YELLOW)✓$(RESET) test_custom_root_effectful"
+	@cargo check --example test_custom_root_effectful
+	@echo "$(YELLOW)✓$(RESET) test_effectful_backwards_compatibility"
+	@cargo check --example test_effectful_backwards_compatibility
 	@echo "$(GREEN)All working examples compile successfully!$(RESET)"
 
 run-examples: ## Run selected examples to see them in action

@@ -382,12 +382,14 @@ pub fn effect(item: TokenStream) -> TokenStream {
 /// Transforms a function into an effectful computation.
 ///
 /// The `#[effectful]` attribute macro converts a regular function into one that
-/// returns an `Effectful<R, Op>` type, where `R` is the original return type.
+/// returns an `Effectful<R, RootType>` type, where `R` is the original return type
+/// and `RootType` is the effect root enum (defaults to `Op`).
 /// The function body is transformed into a coroutine that can yield effects
 /// using the `perform!` macro.
 ///
 /// # Syntax
 ///
+/// ## Basic Usage (defaults to `Op`)
 /// ```ignore
 /// # #![feature(coroutines, coroutine_trait, yield_expr)]
 /// # use algae::prelude::*;
@@ -400,12 +402,25 @@ pub fn effect(item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
+/// ## Custom Root Type
+/// ```ignore
+/// # #![feature(coroutines, coroutine_trait, yield_expr)]
+/// # use algae::prelude::*;
+/// # effect! { root MyOp; Test::GetValue -> i32; }
+/// #[effectful(root = MyOp)]
+/// fn my_function() -> ReturnType {
+///     // Function body can use perform! to perform effects
+///     let value = perform!(SomeEffect::SomeOperation);
+///     // ... rest of function
+/// }
+/// ```
+///
 /// # Transformation
 ///
 /// The macro transforms the function in several ways:
-/// 1. Changes return type from `T` to `Effectful<T, Op>`
+/// 1. Changes return type from `T` to `Effectful<T, RootType>` (where RootType defaults to `Op`)
 /// 2. Wraps the function body in a coroutine generator
-/// 3. Ensures the coroutine can yield `Effect<Op>` values
+/// 3. Ensures the coroutine can yield `Effect<RootType>` values
 /// 4. Handles the resume/yield cycle for effect processing
 ///
 /// # Examples
@@ -498,18 +513,47 @@ pub fn effect(item: TokenStream) -> TokenStream {
 /// - Generic parameters are preserved but may require careful handling with effects
 /// - Lifetime parameters are supported but the coroutine has `'static` requirements
 #[proc_macro_attribute]
-pub fn effectful(_: TokenStream, item: TokenStream) -> TokenStream {
+pub fn effectful(args: TokenStream, item: TokenStream) -> TokenStream {
     let mut f = parse_macro_input!(item as syn::ItemFn);
     let body = &f.block;
 
-    // Transform return type from -> T to -> Effectful<T, Op>
+    // Parse optional root argument
+    let root_type = if args.is_empty() {
+        // Default to Op for backwards compatibility
+        syn::parse_quote! { Op }
+    } else {
+        // Parse root = FooOp syntax
+        let args_span = proc_macro2::Span::call_site();
+        let args_str = args.to_string();
+
+        if let Some(root_name) = args_str.strip_prefix("root = ") {
+            match syn::parse_str::<syn::Ident>(root_name.trim()) {
+                Ok(ident) => ident,
+                Err(_) => {
+                    return syn::Error::new(
+                        args_span,
+                        "Invalid root argument. Expected: #[effectful(root = YourRootType)]",
+                    )
+                    .to_compile_error()
+                    .into();
+                }
+            }
+        } else {
+            return syn::Error::new(
+                args_span,
+                "Invalid attribute argument. Expected: #[effectful(root = YourRootType)] or #[effectful]"
+            ).to_compile_error().into();
+        }
+    };
+
+    // Transform return type from -> T to -> Effectful<T, RootType>
     let inner_type = match &f.sig.output {
         syn::ReturnType::Default => syn::parse_quote! { () },
         syn::ReturnType::Type(_, ty) => ty.as_ref().clone(),
     };
 
     f.sig.output = syn::parse_quote! {
-        -> algae::Effectful<#inner_type, Op>
+        -> algae::Effectful<#inner_type, #root_type>
     };
 
     f.block = syn::parse_quote! {{
