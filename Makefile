@@ -128,6 +128,10 @@ examples: ## Check that all working examples compile
 	@cargo check --example test_custom_root_effectful
 	@echo "$(YELLOW)✓$(RESET) test_effectful_backwards_compatibility"
 	@cargo check --example test_effectful_backwards_compatibility
+	@echo "$(YELLOW)✓$(RESET) test_effectful_scoping_simple"
+	@cargo check --example test_effectful_scoping_simple
+	@echo "$(YELLOW)✓$(RESET) test_effectful_scoping_fix"
+	@cargo check --example test_effectful_scoping_fix
 	@echo "$(GREEN)All working examples compile successfully!$(RESET)"
 
 run-examples: ## Run selected examples to see them in action

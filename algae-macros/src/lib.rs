@@ -519,20 +519,22 @@ pub fn effectful(args: TokenStream, item: TokenStream) -> TokenStream {
 
     // Parse optional root argument
     let root_type = if args.is_empty() {
-        // Default to Op for backwards compatibility
+        // Default to unqualified Op for backwards compatibility
+        // The Op type is generated locally by effect! macro in the current module
         syn::parse_quote! { Op }
     } else {
-        // Parse root = FooOp syntax
-        let args_span = proc_macro2::Span::call_site();
-        let args_str = args.to_string();
+        // Parse root = FooOp syntax - we expect: root = identifier
+        // Convert args to string and parse manually since syn's AttributeArgs
+        // doesn't handle identifier values well
+        let args_str = args.to_string().replace(" ", "");
 
-        if let Some(root_name) = args_str.strip_prefix("root = ") {
-            match syn::parse_str::<syn::Ident>(root_name.trim()) {
+        if let Some(root_name) = args_str.strip_prefix("root=") {
+            match syn::parse_str::<syn::Ident>(root_name) {
                 Ok(ident) => ident,
                 Err(_) => {
                     return syn::Error::new(
-                        args_span,
-                        "Invalid root argument. Expected: #[effectful(root = YourRootType)]",
+                        proc_macro2::Span::call_site(),
+                        "Invalid root type name. Expected: #[effectful(root = YourRootType)]",
                     )
                     .to_compile_error()
                     .into();
@@ -540,7 +542,7 @@ pub fn effectful(args: TokenStream, item: TokenStream) -> TokenStream {
             }
         } else {
             return syn::Error::new(
-                args_span,
+                proc_macro2::Span::call_site(),
                 "Invalid attribute argument. Expected: #[effectful(root = YourRootType)] or #[effectful]"
             ).to_compile_error().into();
         }
