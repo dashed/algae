@@ -777,14 +777,24 @@ cargo run --example minimal
 ```
 Minimal example showing the underlying coroutine mechanics (educational).
 
+### No-Macros Usage
+```bash
+cargo run --example no_macros --no-default-features
+```
+Complete example showing how to use algae without any macros - pure explicit syntax.
+
 ### Run All Examples
 ```bash
 # Run all examples at once
-for example in readme advanced theory pure console effect_test minimal; do
+for example in readme explicit_vs_convenient advanced theory pure console effect_test minimal; do
     echo "=== Running $example ==="
     cargo run --example $example
     echo
 done
+
+# Run no-macros example separately (requires different feature flags)
+echo "=== Running no_macros ==="
+cargo run --example no_macros --no-default-features
 ```
 
 ## 🔧 Development
@@ -875,6 +885,125 @@ cargo bench
 # Profile memory usage
 cargo run --example pure --features profiling
 ```
+
+## 🎛️ Optional Macros Feature
+
+Algae's macros (`effect!`, `#[effectful]`, `perform!`) are **optional**. You can disable them if you prefer explicit syntax or have restrictions on proc-macros.
+
+### Default: Macros Enabled
+
+```toml
+[dependencies]
+algae = "0.1.0"  # macros feature enabled by default
+```
+
+### Disable Macros
+
+```toml
+[dependencies]
+algae = { version = "0.1.0", default-features = false }
+```
+
+### No-Macros Example
+
+When macros are disabled, you define everything manually:
+
+```rust
+#![feature(coroutines, coroutine_trait, yield_expr)]
+use algae::prelude::*;  // Only exports core types, no macros
+use std::any::Any;
+
+// 1. Manually define effect enums (instead of effect! macro)
+#[derive(Debug)]
+pub enum Console {
+    Print(String),
+    ReadLine,
+}
+
+#[derive(Debug)]  
+pub enum Op {
+    Console(Console),
+}
+
+impl From<Console> for Op {
+    fn from(c: Console) -> Self {
+        Op::Console(c)
+    }
+}
+
+// 2. Manually create effectful functions (instead of #[effectful])
+fn greet_user() -> Effectful<String, Op> {
+    Effectful::new(#[coroutine] |mut _reply: Option<Reply>| {
+        // Manual effect operations (instead of perform!)
+        {
+            let effect = Effect::new(Console::Print("What's your name?".to_string()).into());
+            let reply_opt = yield effect;
+            let _: () = reply_opt.unwrap().take::<()>();
+        }
+        
+        let name: String = {
+            let effect = Effect::new(Console::ReadLine.into());
+            let reply_opt = yield effect;
+            reply_opt.unwrap().take::<String>()
+        };
+        
+        format!("Hello, {}!", name)
+    })
+}
+
+// 3. Handlers work exactly the same
+struct ConsoleHandler;
+impl Handler<Op> for ConsoleHandler {
+    fn handle(&mut self, op: &Op) -> Box<dyn Any + Send> {
+        match op {
+            Op::Console(Console::Print(msg)) => {
+                println!("{}", msg);
+                Box::new(())
+            }
+            Op::Console(Console::ReadLine) => {
+                // In real code, read from stdin
+                Box::new("Alice".to_string())
+            }
+        }
+    }
+}
+
+// 4. Execution is identical
+fn main() {
+    let result = greet_user()
+        .handle(ConsoleHandler)
+        .run();
+    println!("Result: {}", result);
+}
+```
+
+> **📁 Working Example**: See [`examples/no_macros.rs`](algae/examples/no_macros.rs) for a complete working example without macros.
+
+### When to Disable Macros
+
+**Use the manual approach when:**
+- **Proc-macro restrictions**: Your environment doesn't allow procedural macros
+- **Full control**: You need custom implementations of the generated types
+- **Library development**: Minimizing dependencies for a library crate
+- **Learning**: Understanding exactly how the effects system works
+- **Custom syntax**: Building your own effect DSL on top of algae
+
+**Use macros (default) when:**
+- **Productivity**: You want clean, readable application code
+- **Rapid development**: Prototyping or building applications quickly
+- **Standard use cases**: The generated code meets your needs
+- **Team development**: Consistent, familiar syntax for all developers
+
+### Feature Compatibility
+
+Both approaches provide identical capabilities:
+- ✅ **One-shot algebraic effects** - Same runtime model
+- ✅ **Type-safe effect handlers** - Same type system
+- ✅ **Composable effect systems** - Same composition patterns
+- ✅ **Zero-cost abstractions** - Same performance characteristics
+- ✅ **Full coroutine support** - Same underlying implementation
+
+**The only difference is syntax for defining and using effects.**
 
 ## 📖 Advanced Usage
 
