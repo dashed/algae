@@ -4,6 +4,21 @@
 <!-- [![Documentation](https://docs.rs/algae/badge.svg)](https://docs.rs/algae) -->
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+---
+
+> # ⚠️ **EXPERIMENTAL TOY PROJECT** ⚠️
+> 
+> **This is a research/educational project and is NOT ready for production use.**
+> 
+> - 🚧 **Unstable API**: Everything may change without notice
+> - 📚 **Learning Purpose**: Built primarily for exploring algebraic effects in Rust
+> - ⚠️ **Use at Your Own Risk**: Not suitable for any production systems
+> - 🧪 **Experimental**: Relies on unstable Rust nightly features
+> 
+> If you're looking for production-ready effect systems, consider established alternatives like async/await, dependency injection, or other mature libraries.
+
+---
+
 **Algae** is a Rust library that brings the power of algebraic effects to systems programming. It provides a clean, type-safe way to handle side effects in your programs while maintaining composability, testability, and performance.
 
 Algae implements **one-shot (linear) algebraic effects**, where each effect operation receives exactly one response and continuations are not captured for reuse. This design choice prioritizes simplicity, performance, and ease of understanding while covering the vast majority of real-world use cases.
