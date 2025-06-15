@@ -74,14 +74,14 @@ fn main() {
 
     // Wait for the thread to complete
     let result = handle.join().expect("Thread should complete successfully");
-    println!("[MAIN] Result from worker thread: {}", result);
+    println!("[MAIN] Result from worker thread: {result}");
 
     // Test multiple threads
     let mut handles = vec![];
     for i in 0..3 {
         let computation = compute_in_thread(i * 10, i * 5);
         let handle = thread::spawn(move || {
-            let handler = ThreadSafeHandler::new(&format!("WORKER-{}", i));
+            let handler = ThreadSafeHandler::new(&format!("WORKER-{i}"));
             computation.handle(handler).run()
         });
         handles.push(handle);
@@ -93,7 +93,7 @@ fn main() {
         .map(|h| h.join().expect("Thread should complete"))
         .collect();
 
-    println!("[MAIN] Results from all worker threads: {:?}", results);
+    println!("[MAIN] Results from all worker threads: {results:?}");
 
     // Verify Send trait is properly implemented
     fn assert_send<T: Send>(_: T) {}

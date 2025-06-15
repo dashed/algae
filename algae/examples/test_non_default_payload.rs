@@ -8,7 +8,7 @@
 use algae::prelude::*;
 
 // A type that deliberately doesn't implement Default
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NonDefaultType {
     pub value: String,
     pub id: u64,

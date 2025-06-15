@@ -790,6 +790,12 @@ cargo run --example console
 ```
 Demonstrates interactive I/O with both real and mock implementations, plus random number generation.
 
+### Partial Handlers (Panic-Free Composition)
+```bash
+cargo run --example partial_handlers
+```
+Shows how to use partial handlers for safe, modular effect composition without panics.
+
 ### Basic Functionality
 ```bash
 cargo run --example effect_test
@@ -811,7 +817,7 @@ Complete example showing how to use algae without any macros - pure explicit syn
 ### Run All Examples
 ```bash
 # Run core examples demonstrating main features
-for example in readme explicit_vs_convenient multiple_effects_demo test_send_across_threads advanced theory pure console effect_test minimal; do
+for example in readme explicit_vs_convenient multiple_effects_demo test_send_across_threads advanced theory pure console partial_handlers effect_test minimal; do
     echo "=== Running $example ==="
     cargo run --example $example
     echo
@@ -1422,6 +1428,100 @@ fn batch_process(items: Vec<String>) -> Vec<Result<String, String>> {
     results
 }
 ```
+
+### Partial Handlers and Safe Composition
+
+Algae supports **partial handlers** that can selectively handle operations, enabling safe effect composition without panics:
+
+```rust
+// Define partial handlers that only handle specific operations
+struct MathHandler;
+impl PartialHandler<Op> for MathHandler {
+    fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+        match op {
+            Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
+            Op::Math(Math::Multiply((a, b))) => Some(Box::new(a * b)),
+            _ => None,  // Decline other operations
+        }
+    }
+}
+
+struct LoggerHandler;
+impl PartialHandler<Op> for LoggerHandler {
+    fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+        match op {
+            Op::Logger(Logger::Info(msg)) => {
+                println!("[INFO] {}", msg);
+                Some(Box::new(()))
+            }
+            _ => None,
+        }
+    }
+}
+
+// Compose handlers and get Result-based error handling
+#[effectful]
+fn program() -> i32 {
+    let _: () = perform!(Logger::Info("Starting calculation".to_string()));
+    let sum: i32 = perform!(Math::Add((2, 3)));
+    let _: () = perform!(Logger::Info(format!("Result: {}", sum)));
+    sum
+}
+
+// Method 1: Manual VecHandler
+let mut handlers = VecHandler::new();
+handlers.push(MathHandler);
+handlers.push(LoggerHandler);
+
+match program().run_checked(handlers) {
+    Ok(result) => println!("Success: {}", result),
+    Err(UnhandledOp(op)) => eprintln!("Unhandled operation: {:?}", op),
+}
+
+// Method 2: Using handle_all
+let result = program()
+    .handle_all(vec![
+        Box::new(MathHandler) as Box<dyn PartialHandler<Op> + Send>,
+        Box::new(LoggerHandler),
+    ])
+    .run_checked()?;
+```
+
+#### Key Benefits
+
+- **🔒 No Panics**: `run_checked` returns `Result<T, UnhandledOp<Op>>` instead of panicking
+- **🔄 Composable**: Combine multiple handlers that each handle a subset of operations
+- **📦 Modular**: Handlers can be developed and tested independently
+- **🎯 Clear Errors**: Know exactly which operation wasn't handled
+- **⚡ Same Performance**: No additional overhead compared to total handlers
+
+#### Handler Types
+
+```rust
+// Total handler (existing) - must handle all operations
+impl Handler<Op> for TotalHandler {
+    fn handle(&mut self, op: &Op) -> Box<dyn Any + Send> {
+        match op {
+            // Must handle ALL operations or panic
+        }
+    }
+}
+
+// Partial handler (new) - can decline operations
+impl PartialHandler<Op> for SelectiveHandler {
+    fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+        match op {
+            // Return Some for handled operations
+            // Return None to decline
+        }
+    }
+}
+
+// Total handlers can still be used with run_checked_with
+let result = computation.run_checked_with(TotalHandler)?;
+```
+
+> **📁 Working Example**: See [`examples/partial_handlers.rs`](algae/examples/partial_handlers.rs) for comprehensive demonstrations of partial handlers, including handler composition, ordering, and error handling.
 
 ## 🔬 Performance
 

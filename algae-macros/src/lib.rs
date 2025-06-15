@@ -335,7 +335,7 @@ pub fn effect(item: TokenStream) -> TokenStream {
         }
 
         family_enums.extend(quote! {
-            #[derive(Debug)]
+            #[derive(Debug, Clone, PartialEq)]
             pub enum #family_ident {
                 #variant_tokens
             }
@@ -361,7 +361,7 @@ pub fn effect(item: TokenStream) -> TokenStream {
 
         #family_enums
 
-        #[derive(Debug)]
+        #[derive(Debug, Clone, PartialEq)]
         pub enum #root_ident {
             #op_variants
         }

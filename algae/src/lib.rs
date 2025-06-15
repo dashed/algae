@@ -557,6 +557,169 @@ impl<R, Op: 'static> Effectful<R, Op> {
     pub fn handle<H: Handler<Op>>(self, h: H) -> Handled<R, Op, H> {
         Handled { eff: self, h }
     }
+
+    /// Executes the effectful computation with a partial handler that may decline operations.
+    ///
+    /// Unlike `run_with`, this method returns a `Result` indicating whether all effects
+    /// were successfully handled. If the handler declines to handle an operation (returns `None`),
+    /// execution stops and returns `Err(UnhandledOp(op))`.
+    ///
+    /// # Arguments
+    ///
+    /// * `h` - A partial handler that may decline to handle some operations
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(result)` - If all effects were handled successfully
+    /// * `Err(UnhandledOp(op))` - If an effect operation was not handled
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// # use algae::prelude::*;
+    /// # effect! {
+    /// #     Math::Add ((i32, i32)) -> i32;
+    /// #     Logger::Info (String) -> ();
+    /// # }
+    /// struct MathOnlyHandler;
+    /// impl PartialHandler<Op> for MathOnlyHandler {
+    ///     fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+    ///         match op {
+    ///             Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
+    ///             _ => None,
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// #[effectful]
+    /// fn computation() -> i32 {
+    ///     let _: () = perform!(Logger::Info("Starting".to_string())); // This will fail
+    ///     perform!(Math::Add((2, 3)))
+    /// }
+    ///
+    /// match computation().run_checked(MathOnlyHandler) {
+    ///     Ok(result) => println!("Result: {}", result),
+    ///     Err(UnhandledOp(op)) => eprintln!("Unhandled: {:?}", op),
+    /// }
+    /// ```
+    pub fn run_checked<H>(mut self, mut h: H) -> Result<R, UnhandledOp<Op>>
+    where
+        H: PartialHandler<Op>,
+    {
+        let mut resume_arg = None;
+        loop {
+            match self.gen.as_mut().resume(resume_arg) {
+                CoroutineState::Complete(r) => return Ok(r),
+                CoroutineState::Yielded(mut eff) => match h.maybe_handle(&eff.op) {
+                    Some(reply_any) => {
+                        eff.fill_boxed(reply_any);
+                        resume_arg = Some(eff.get_reply());
+                    }
+                    None => return Err(UnhandledOp(eff.op)),
+                },
+            }
+        }
+    }
+
+    /// Executes the effectful computation with a total handler wrapped to support checked execution.
+    ///
+    /// This is a convenience method for using total handlers with `run_checked`.
+    /// Since total handlers always handle all operations, this will only return
+    /// `Err` if the handler itself panics.
+    ///
+    /// # Arguments
+    ///
+    /// * `h` - A total handler that handles all operations
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(result)` - Always, unless the handler panics
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// # use algae::prelude::*;
+    /// # effect! { Math::Add ((i32, i32)) -> i32; }
+    /// struct MathHandler;
+    /// impl Handler<Op> for MathHandler {
+    ///     fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
+    ///         match op {
+    ///             Op::Math(Math::Add((a, b))) => Box::new(a + b),
+    ///         }
+    ///     }
+    /// }
+    ///
+    /// #[effectful]
+    /// fn computation() -> i32 {
+    ///     perform!(Math::Add((2, 3)))
+    /// }
+    ///
+    /// let result = computation().run_checked_with(MathHandler);
+    /// assert_eq!(result, Ok(5));
+    /// ```
+    pub fn run_checked_with<H>(self, h: H) -> Result<R, UnhandledOp<Op>>
+    where
+        H: Handler<Op>,
+    {
+        Ok(self.run_with(h))
+    }
+
+    /// Attaches multiple handlers at once for processing effects.
+    ///
+    /// This method creates a `VecHandler` containing all provided handlers and returns
+    /// a `Handled` computation ready for execution. Handlers are tried in iteration order
+    /// until one accepts each operation.
+    ///
+    /// # Arguments
+    ///
+    /// * `iter` - An iterator of handlers to attach
+    ///
+    /// # Returns
+    ///
+    /// A `Handled` computation with all handlers attached
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// # use algae::prelude::*;
+    /// # effect! {
+    /// #     Math::Add ((i32, i32)) -> i32;
+    /// #     Logger::Info (String) -> ();
+    /// #     File::Read (String) -> String;
+    /// # }
+    /// # struct MathHandler;
+    /// # struct LoggerHandler;
+    /// # struct FileHandler;
+    /// # impl PartialHandler<Op> for MathHandler { /* ... */ }
+    /// # impl PartialHandler<Op> for LoggerHandler { /* ... */ }
+    /// # impl PartialHandler<Op> for FileHandler { /* ... */ }
+    ///
+    /// #[effectful]
+    /// fn complex_computation() -> String {
+    ///     let _: () = perform!(Logger::Info("Starting computation".to_string()));
+    ///     let sum: i32 = perform!(Math::Add((5, 3)));
+    ///     let content: String = perform!(File::Read("data.txt".to_string()));
+    ///     format!("Sum: {}, Content: {}", sum, content)
+    /// }
+    ///
+    /// let result = complex_computation()
+    ///     .handle_all([MathHandler, LoggerHandler, FileHandler])
+    ///     .run_checked()?;
+    /// ```
+    pub fn handle_all<I, H>(self, iter: I) -> Handled<R, Op, VecHandler<Op>>
+    where
+        I: IntoIterator<Item = H>,
+        H: PartialHandler<Op> + Send + 'static,
+    {
+        let mut vec = VecHandler::new();
+        for h in iter {
+            vec.push(h);
+        }
+        Handled { eff: self, h: vec }
+    }
 }
 
 /// A bundled effectful computation and handler ready for execution.
@@ -594,7 +757,7 @@ impl<R, Op: 'static> Effectful<R, Op> {
 /// let result = handled.run(); // Execute the computation
 /// assert_eq!(result, 42);
 /// ```
-pub struct Handled<R, Op: 'static, H: Handler<Op>> {
+pub struct Handled<R, Op: 'static, H> {
     /// The effectful computation to execute
     eff: Effectful<R, Op>,
     /// The handler that will process effects
@@ -635,6 +798,105 @@ impl<R, Op: 'static, H: Handler<Op>> Handled<R, Op, H> {
     /// ```
     pub fn run(self) -> R {
         self.eff.run_with(self.h)
+    }
+}
+
+impl<R, Op: 'static, H1> Handled<R, Op, H1>
+where
+    H1: PartialHandler<Op>,
+{
+    /// Adds another handler to the handler chain.
+    ///
+    /// This method allows chaining multiple partial handlers together. The existing
+    /// handler and the new handler are combined into a `VecHandler` that tries
+    /// each in order.
+    ///
+    /// # Arguments
+    ///
+    /// * `h2` - The additional handler to add to the chain
+    ///
+    /// # Returns
+    ///
+    /// A new `Handled` computation with both handlers
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// # use algae::prelude::*;
+    /// # effect! {
+    /// #     Math::Add ((i32, i32)) -> i32;
+    /// #     Logger::Info (String) -> ();
+    /// # }
+    /// # struct MathHandler;
+    /// # struct LoggerHandler;
+    /// # impl PartialHandler<Op> for MathHandler { /* ... */ }
+    /// # impl PartialHandler<Op> for LoggerHandler { /* ... */ }
+    ///
+    /// #[effectful]
+    /// fn computation() -> i32 {
+    ///     let _: () = perform!(Logger::Info("Computing...".to_string()));
+    ///     perform!(Math::Add((2, 3)))
+    /// }
+    ///
+    /// let result = computation()
+    ///     .handle(MathHandler)
+    ///     .handle(LoggerHandler)  // Chain another handler
+    ///     .run_checked()?;
+    /// ```
+    pub fn handle<H2>(self, h2: H2) -> Handled<R, Op, VecHandler<Op>>
+    where
+        H2: PartialHandler<Op> + Send + 'static,
+        H1: Send + 'static,
+    {
+        let mut list = VecHandler::new();
+        list.push(self.h);
+        list.push(h2);
+        Handled {
+            eff: self.eff,
+            h: list,
+        }
+    }
+
+    /// Executes the computation with the partial handler(s).
+    ///
+    /// Unlike `run()`, this method returns a `Result` that indicates whether
+    /// all effects were successfully handled.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(result)` - If all effects were handled
+    /// * `Err(UnhandledOp(op))` - If an effect was not handled
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// # use algae::prelude::*;
+    /// # effect! {
+    /// #     Math::Add ((i32, i32)) -> i32;
+    /// #     Logger::Info (String) -> ();
+    /// # }
+    /// # struct MathHandler;
+    /// # struct LoggerHandler;
+    /// # impl PartialHandler<Op> for MathHandler { /* ... */ }
+    /// # impl PartialHandler<Op> for LoggerHandler { /* ... */ }
+    ///
+    /// #[effectful]
+    /// fn computation() -> i32 {
+    ///     let _: () = perform!(Logger::Info("Computing...".to_string()));
+    ///     perform!(Math::Add((2, 3)))
+    /// }
+    ///
+    /// match computation()
+    ///     .handle_all([MathHandler, LoggerHandler])
+    ///     .run_checked() {
+    ///     Ok(result) => println!("Result: {}", result),
+    ///     Err(UnhandledOp(op)) => eprintln!("Unhandled: {:?}", op),
+    /// }
+    /// ```
+    pub fn run_checked(self) -> Result<R, UnhandledOp<Op>> {
+        self.eff.run_checked(self.h)
     }
 }
 
@@ -735,6 +997,139 @@ pub trait Handler<Op> {
     fn handle(&mut self, op: &Op) -> Box<dyn Any + Send>;
 }
 
+/// Trait for handlers that can selectively handle operations.
+///
+/// A partial handler can choose to process an operation or decline it by returning `None`.
+/// This enables composing multiple handlers where each handles a subset of operations.
+///
+/// # Type Parameters
+///
+/// * `Op` - The type of operations this handler might process
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # #![feature(coroutines, coroutine_trait, yield_expr)]
+/// # use algae::prelude::*;
+/// # effect! {
+/// #     Math::Add ((i32, i32)) -> i32;
+/// #     Logger::Info (String) -> ();
+/// # }
+/// struct MathOnlyHandler;
+///
+/// impl PartialHandler<Op> for MathOnlyHandler {
+///     fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+///         match op {
+///             Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
+///             _ => None, // Decline to handle non-math operations
+///         }
+///     }
+/// }
+/// ```
+pub trait PartialHandler<Op> {
+    /// Attempts to process an operation, returning `Some` if handled or `None` if declined.
+    ///
+    /// # Arguments
+    ///
+    /// * `op` - The operation to potentially process
+    ///
+    /// # Returns
+    ///
+    /// * `Some(result)` - If this handler processed the operation
+    /// * `None` - If this handler declines to handle this operation
+    fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>>;
+}
+
+/// Implementation of PartialHandler for `Box<dyn PartialHandler>`
+impl<Op> PartialHandler<Op> for Box<dyn PartialHandler<Op> + Send> {
+    fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+        (**self).maybe_handle(op)
+    }
+}
+
+/// A dynamic collection of partial handlers that attempts each in order.
+///
+/// `VecHandler` allows composing multiple partial handlers at runtime. When handling
+/// an operation, it tries each handler in insertion order until one accepts the operation.
+///
+/// # Type Parameters
+///
+/// * `Op` - The type of operations these handlers process
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # #![feature(coroutines, coroutine_trait, yield_expr)]
+/// # use algae::prelude::*;
+/// let mut vec_handler = VecHandler::<Op>::new();
+/// vec_handler.push(MathHandler);
+/// vec_handler.push(LoggerHandler);
+/// vec_handler.push(FileHandler);
+/// ```
+pub struct VecHandler<Op> {
+    inner: Vec<Box<dyn PartialHandler<Op> + Send>>,
+}
+
+impl<Op> VecHandler<Op> {
+    /// Creates a new empty handler collection.
+    pub fn new() -> Self {
+        Self { inner: Vec::new() }
+    }
+
+    /// Adds a handler to the collection.
+    ///
+    /// Handlers are tried in the order they were added.
+    ///
+    /// # Arguments
+    ///
+    /// * `h` - The handler to add
+    pub fn push<H>(&mut self, h: H)
+    where
+        H: PartialHandler<Op> + Send + 'static,
+    {
+        self.inner.push(Box::new(h));
+    }
+}
+
+impl<Op> Default for VecHandler<Op> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<Op> PartialHandler<Op> for VecHandler<Op> {
+    fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+        for h in &mut self.inner {
+            if let Some(v) = h.maybe_handle(op) {
+                return Some(v);
+            }
+        }
+        None
+    }
+}
+
+/// Error type returned when an effect operation has no handler.
+///
+/// This error contains the unhandled operation, allowing the caller to inspect
+/// what went wrong and potentially recover.
+///
+/// # Type Parameters
+///
+/// * `Op` - The type of the unhandled operation
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # #![feature(coroutines, coroutine_trait, yield_expr)]
+/// # use algae::prelude::*;
+/// match computation.run_checked(handler) {
+///     Ok(result) => println!("Success: {}", result),
+///     Err(UnhandledOp(op)) => eprintln!("Unhandled operation: {:?}", op),
+/// }
+/// ```
+#[derive(Debug, PartialEq)]
+pub struct UnhandledOp<Op>(pub Op);
+
 /// Convenience module that re-exports everything needed to use algae.
 ///
 /// This module provides a single import point for all the essential types
@@ -748,6 +1143,9 @@ pub trait Handler<Op> {
 /// - [`Effectful`] - Wrapper around effectful computations  
 /// - [`Handler`] - Trait for implementing effect handlers
 /// - [`Reply`] - Container for handler response values
+/// - [`PartialHandler`] - Trait for handlers that may decline operations
+/// - [`VecHandler`] - Collection of handlers tried in order
+/// - [`UnhandledOp`] - Error returned when no handler handles an operation
 ///
 /// ## Macros (when "macros" feature is enabled)
 /// - `effect!` - Macro for defining effect families and operations
@@ -801,7 +1199,7 @@ pub trait Handler<Op> {
 /// When using algae without the "macros" feature, you need to define
 /// your effect types and handlers manually using the core types.
 pub mod prelude {
-    pub use crate::{Effect, Effectful, Handler, Reply};
+    pub use crate::{Effect, Effectful, Handler, PartialHandler, Reply, UnhandledOp, VecHandler};
 
     #[cfg(feature = "macros")]
     pub use algae_macros::{effect, effectful, perform};
@@ -887,6 +1285,7 @@ macro_rules! combine_roots {
 mod tests {
     use crate as algae;
     use algae::prelude::*;
+    use std::any::Any;
     use std::collections::HashMap;
 
     // Define test effects for comprehensive testing
@@ -1755,5 +2154,529 @@ mod tests {
         let value: i32 = reply.take();
 
         assert_eq!(value, 42);
+    }
+
+    // ============================================================================
+    // Partial Handler Tests
+    // ============================================================================
+
+    #[test]
+    fn test_partial_handler_basic() {
+        // Test basic partial handler functionality
+        struct MathOnlyHandler;
+
+        impl PartialHandler<Op> for MathOnlyHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
+                    Op::Math(Math::Multiply((a, b))) => Some(Box::new(a * b)),
+                    _ => None,
+                }
+            }
+        }
+
+        #[effectful]
+        fn math_only() -> i32 {
+            let sum: i32 = perform!(Math::Add((5, 3)));
+            let product: i32 = perform!(Math::Multiply((sum, 2)));
+            product
+        }
+
+        let result = math_only().run_checked(MathOnlyHandler);
+        assert_eq!(result, Ok(16)); // (5 + 3) * 2 = 16
+    }
+
+    #[test]
+    fn test_partial_handler_decline() {
+        // Test that partial handlers correctly decline operations
+        struct MathOnlyHandler;
+
+        impl PartialHandler<Op> for MathOnlyHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(_) => Some(Box::new(42i32)), // Dummy response
+                    _ => None,
+                }
+            }
+        }
+
+        #[effectful]
+        fn mixed_effects() -> i32 {
+            let _: () = perform!(Logger::Info("Starting".to_string())); // This should fail
+            perform!(Math::Add((1, 2)))
+        }
+
+        let result = mixed_effects().run_checked(MathOnlyHandler);
+        assert!(result.is_err());
+
+        if let Err(UnhandledOp(op)) = result {
+            match op {
+                Op::Logger(Logger::Info(_)) => (), // Expected
+                _ => panic!("Wrong unhandled operation"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_vec_handler() {
+        // Test VecHandler with multiple partial handlers
+        struct MathPartialHandler;
+        struct LoggerPartialHandler {
+            logs: Vec<String>,
+        }
+
+        impl PartialHandler<Op> for MathPartialHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
+                    _ => None,
+                }
+            }
+        }
+
+        impl PartialHandler<Op> for LoggerPartialHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Logger(Logger::Info(msg)) => {
+                        self.logs.push(msg.clone());
+                        Some(Box::new(()))
+                    }
+                    _ => None,
+                }
+            }
+        }
+
+        #[effectful]
+        fn combined_effects() -> i32 {
+            let _: () = perform!(Logger::Info("Computing sum".to_string()));
+            let sum: i32 = perform!(Math::Add((10, 20)));
+            let _: () = perform!(Logger::Info(format!("Result: {}", sum)));
+            sum
+        }
+
+        let mut vec_handler = VecHandler::new();
+        vec_handler.push(MathPartialHandler);
+        vec_handler.push(LoggerPartialHandler { logs: Vec::new() });
+
+        let result = combined_effects().run_checked(vec_handler);
+        assert_eq!(result, Ok(30));
+    }
+
+    #[test]
+    fn test_handle_all() {
+        // Test handle_all with array of handlers
+        struct AddHandler;
+        struct MultiplyHandler;
+        struct InfoHandler;
+
+        impl PartialHandler<Op> for AddHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
+                    _ => None,
+                }
+            }
+        }
+
+        impl PartialHandler<Op> for MultiplyHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Multiply((a, b))) => Some(Box::new(a * b)),
+                    _ => None,
+                }
+            }
+        }
+
+        impl PartialHandler<Op> for InfoHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Logger(Logger::Info(_)) => Some(Box::new(())),
+                    _ => None,
+                }
+            }
+        }
+
+        #[effectful]
+        fn multi_effect_computation() -> i32 {
+            let _: () = perform!(Logger::Info("Starting".to_string()));
+            let sum: i32 = perform!(Math::Add((7, 3)));
+            let result: i32 = perform!(Math::Multiply((sum, 4)));
+            let _: () = perform!(Logger::Info("Done".to_string()));
+            result
+        }
+
+        // Test with manual VecHandler
+        let mut vec_handler = VecHandler::new();
+        vec_handler.push(AddHandler);
+        vec_handler.push(MultiplyHandler);
+        vec_handler.push(InfoHandler);
+
+        let result = multi_effect_computation().run_checked(vec_handler);
+
+        assert_eq!(result, Ok(40)); // (7 + 3) * 4 = 40
+    }
+
+    #[test]
+    fn test_handle_all_method() {
+        // Test the actual handle_all method
+        struct MathHandler;
+        struct LogHandler;
+
+        impl PartialHandler<Op> for MathHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
+                    _ => None,
+                }
+            }
+        }
+
+        impl PartialHandler<Op> for LogHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Logger(Logger::Info(_)) => Some(Box::new(())),
+                    _ => None,
+                }
+            }
+        }
+
+        #[effectful]
+        fn computation() -> i32 {
+            let _: () = perform!(Logger::Info("Computing".to_string()));
+            perform!(Math::Add((15, 25)))
+        }
+
+        // Using handle_all with a vec
+        let handlers: Vec<Box<dyn PartialHandler<Op> + Send>> =
+            vec![Box::new(MathHandler), Box::new(LogHandler)];
+
+        let result = computation().handle_all(handlers).run_checked();
+
+        assert_eq!(result, Ok(40));
+    }
+
+    #[test]
+    fn test_handle_all_with_vec() {
+        // Test handle_all with Vec
+        struct StdoutHandler;
+        struct CalculatorHandler;
+
+        impl PartialHandler<Op> for StdoutHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::IO(IO::WriteString(s)) => {
+                        // In tests, just acknowledge without printing
+                        let _ = s;
+                        Some(Box::new(()))
+                    }
+                    _ => None,
+                }
+            }
+        }
+
+        impl PartialHandler<Op> for CalculatorHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
+                    _ => None,
+                }
+            }
+        }
+
+        #[effectful]
+        fn program() -> i32 {
+            let _: () = perform!(IO::WriteString("2 + 3 =".to_string()));
+            perform!(Math::Add((2, 3)))
+        }
+
+        let mut vec_handler = VecHandler::new();
+        vec_handler.push(StdoutHandler);
+        vec_handler.push(CalculatorHandler);
+
+        let result = program().run_checked(vec_handler);
+
+        assert_eq!(result, Ok(5));
+    }
+
+    #[test]
+    fn test_handler_chain() {
+        // Test chaining handlers with .handle()
+        struct FirstHandler;
+        struct SecondHandler;
+        struct ThirdHandler;
+
+        impl PartialHandler<Op> for FirstHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
+                    _ => None,
+                }
+            }
+        }
+
+        impl PartialHandler<Op> for SecondHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Logger(Logger::Info(_)) => Some(Box::new(())),
+                    _ => None,
+                }
+            }
+        }
+
+        impl PartialHandler<Op> for ThirdHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Multiply((a, b))) => Some(Box::new(a * b)),
+                    _ => None,
+                }
+            }
+        }
+
+        #[effectful]
+        fn chained_computation() -> i32 {
+            let _: () = perform!(Logger::Info("Start".to_string()));
+            let x: i32 = perform!(Math::Add((5, 5)));
+            let y: i32 = perform!(Math::Multiply((x, 3)));
+            let _: () = perform!(Logger::Info("End".to_string()));
+            y
+        }
+
+        let mut vec_handler = VecHandler::new();
+        vec_handler.push(FirstHandler);
+        vec_handler.push(SecondHandler);
+        vec_handler.push(ThirdHandler);
+
+        let result = chained_computation().run_checked(vec_handler);
+
+        assert_eq!(result, Ok(30)); // (5 + 5) * 3 = 30
+    }
+
+    #[test]
+    fn test_unhandled_op_error() {
+        // Test that UnhandledOp contains the correct operation
+        struct EmptyHandler;
+
+        impl PartialHandler<Op> for EmptyHandler {
+            fn maybe_handle(&mut self, _op: &Op) -> Option<Box<dyn Any + Send>> {
+                None // Decline everything
+            }
+        }
+
+        #[effectful]
+        fn failing_computation() -> i32 {
+            perform!(Math::Add((1, 2)))
+        }
+
+        let result = failing_computation().run_checked(EmptyHandler);
+        assert!(result.is_err());
+
+        if let Err(UnhandledOp(op)) = result {
+            match op {
+                Op::Math(Math::Add((1, 2))) => (), // Expected
+                _ => panic!("Wrong unhandled operation"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_total_handler_as_partial() {
+        // Test that total handlers work with run_checked_with
+        struct TotalMathHandler;
+
+        impl Handler<Op> for TotalMathHandler {
+            fn handle(&mut self, op: &Op) -> Box<dyn Any + Send> {
+                match op {
+                    Op::Math(Math::Add((a, b))) => Box::new(a + b),
+                    Op::Math(Math::Multiply((a, b))) => Box::new(a * b),
+                    _ => panic!("TotalMathHandler cannot handle {op:?}"),
+                }
+            }
+        }
+
+        #[effectful]
+        fn math_computation() -> i32 {
+            let x: i32 = perform!(Math::Add((4, 6)));
+            perform!(Math::Multiply((x, 2)))
+        }
+
+        // Total handler used with run_checked_with
+        let result = math_computation().run_checked_with(TotalMathHandler);
+        assert_eq!(result, Ok(20)); // (4 + 6) * 2 = 20
+    }
+
+    #[test]
+    fn test_mixed_handler_types() {
+        // Test mixing different partial handlers
+        struct PartialMathHandler;
+        struct PartialLogHandler;
+
+        impl PartialHandler<Op> for PartialMathHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
+                    _ => None,
+                }
+            }
+        }
+
+        impl PartialHandler<Op> for PartialLogHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Logger(Logger::Info(_)) => Some(Box::new(())),
+                    _ => None,
+                }
+            }
+        }
+
+        #[effectful]
+        fn mixed_computation() -> i32 {
+            let _: () = perform!(Logger::Info("Starting".to_string()));
+            perform!(Math::Add((8, 12)))
+        }
+
+        let mut vec_handler = VecHandler::new();
+        vec_handler.push(PartialMathHandler);
+        vec_handler.push(PartialLogHandler);
+
+        let result = mixed_computation().run_checked(vec_handler);
+
+        assert_eq!(result, Ok(20));
+    }
+
+    #[test]
+    fn test_handler_ordering() {
+        // Test that handlers are tried in order
+        struct FirstCatchAllHandler;
+        struct SecondHandler;
+
+        impl PartialHandler<Op> for FirstCatchAllHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Add((_, _))) => Some(Box::new(100i32)), // Always return 100
+                    _ => None,
+                }
+            }
+        }
+
+        impl PartialHandler<Op> for SecondHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)), // Correct addition
+                    _ => None,
+                }
+            }
+        }
+
+        #[effectful]
+        fn order_test() -> i32 {
+            perform!(Math::Add((5, 7)))
+        }
+
+        // First handler should catch it
+        let mut vec_handler1 = VecHandler::new();
+        vec_handler1.push(FirstCatchAllHandler);
+        vec_handler1.push(SecondHandler);
+
+        let result1 = order_test().run_checked(vec_handler1);
+        assert_eq!(result1, Ok(100));
+
+        // Reverse order - second handler (now first) should give correct result
+        let mut vec_handler2 = VecHandler::new();
+        vec_handler2.push(SecondHandler);
+        vec_handler2.push(FirstCatchAllHandler);
+
+        let result2 = order_test().run_checked(vec_handler2);
+        assert_eq!(result2, Ok(12));
+    }
+
+    #[test]
+    fn test_stateful_partial_handler() {
+        // Test that partial handlers can maintain state
+        struct CountingHandler {
+            count: usize,
+        }
+
+        impl PartialHandler<Op> for CountingHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Logger(Logger::Info(_)) => {
+                        self.count += 1;
+                        Some(Box::new(()))
+                    }
+                    Op::Logger(Logger::GetLogCount) => Some(Box::new(self.count)),
+                    _ => None,
+                }
+            }
+        }
+
+        #[effectful]
+        fn counting_program() -> usize {
+            let _: () = perform!(Logger::Info("First".to_string()));
+            let _: () = perform!(Logger::Info("Second".to_string()));
+            let _: () = perform!(Logger::Info("Third".to_string()));
+            perform!(Logger::GetLogCount)
+        }
+
+        let handler = CountingHandler { count: 0 };
+        let result = counting_program().run_checked(handler);
+        assert_eq!(result, Ok(3));
+    }
+
+    #[test]
+    fn test_result_error_propagation() {
+        // Test that errors in effectful computations propagate correctly
+        struct DivisionHandler;
+
+        impl PartialHandler<Op> for DivisionHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Divide((a, b))) => {
+                        if *b == 0 {
+                            Some(Box::new(Err::<i32, String>("Division by zero".to_string())))
+                        } else {
+                            Some(Box::new(Ok::<i32, String>(a / b)))
+                        }
+                    }
+                    _ => None,
+                }
+            }
+        }
+
+        #[effectful]
+        fn safe_division() -> Result<i32, String> {
+            let result: Result<i32, String> = perform!(Math::Divide((10, 0)));
+            result
+        }
+
+        let handler = DivisionHandler;
+        let result = safe_division().run_checked(handler);
+        assert!(result.is_ok()); // run_checked succeeded
+        assert!(result.unwrap().is_err()); // but the division failed
+    }
+
+    #[test]
+    fn test_empty_vec_handler() {
+        // Test that empty VecHandler declines everything
+        #[effectful]
+        fn simple_effect() -> i32 {
+            perform!(Math::Add((1, 1)))
+        }
+
+        let empty_handler = VecHandler::<Op>::new();
+        let result = simple_effect().run_checked(empty_handler);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_handle_all_empty() {
+        // Test handle_all with empty iterator
+        #[effectful]
+        fn simple_effect() -> i32 {
+            perform!(Math::Add((2, 2)))
+        }
+
+        let empty_handler = VecHandler::<Op>::new();
+        let result = simple_effect().run_checked(empty_handler);
+        assert!(result.is_err());
     }
 }
