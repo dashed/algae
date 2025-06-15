@@ -118,6 +118,7 @@ fn main() {
 > **📁 Working Examples**: 
 > - [`examples/readme.rs`](algae/examples/readme.rs) - Complete version of this code with real and mock handlers
 > - [`examples/explicit_vs_convenient.rs`](algae/examples/explicit_vs_convenient.rs) - Side-by-side comparison proving both approaches are identical
+> - [`examples/test_send_across_threads.rs`](algae/examples/test_send_across_threads.rs) - Demonstrates thread-safe effectful computations
 
 ## 📚 Core Concepts
 
@@ -729,6 +730,12 @@ cargo run --example overview
 ```
 Comprehensive roadmap showing where to find all examples, tests, and documentation.
 
+### Thread Safety Examples
+```bash
+cargo run --example test_send_across_threads
+```
+Demonstrates how effectful computations can be safely sent across threads for concurrent processing.
+
 ### Quick Start - README Example
 ```bash
 cargo run --example readme
@@ -797,8 +804,15 @@ Complete example showing how to use algae without any macros - pure explicit syn
 
 ### Run All Examples
 ```bash
-# Run all examples at once
-for example in readme explicit_vs_convenient multiple_effects_demo advanced theory pure console effect_test minimal; do
+# Run core examples demonstrating main features
+for example in readme explicit_vs_convenient multiple_effects_demo test_send_across_threads advanced theory pure console effect_test minimal; do
+    echo "=== Running $example ==="
+    cargo run --example $example
+    echo
+done
+
+# Run test examples demonstrating bug fixes and edge cases
+for example in test_non_default_payload test_custom_root_effectful test_effectful_scoping_fix test_error_messages; do
     echo "=== Running $example ==="
     cargo run --example $example
     echo
@@ -878,11 +892,17 @@ cargo fmt -- --check
 ### Examples
 
 ```bash
-# Run all examples
+# Run core examples
 cargo run --example pure
 cargo run --example console  
 cargo run --example debug
 cargo run --example effect_test
+cargo run --example test_send_across_threads
+
+# Run feature demonstrations
+cargo run --example test_non_default_payload
+cargo run --example test_custom_root_effectful
+cargo run --example test_error_messages
 
 # Run specific example with release optimizations
 cargo run --release --example console
@@ -1057,9 +1077,154 @@ pub enum Op {
 }
 ```
 
-#### ✅ New: Custom Root Enum Names
+#### ✅ Custom Root Enum Names
 
-You can now use multiple `effect!` declarations in the same module by specifying custom root enum names:
+##### Overview
+
+When building larger applications, you may need to define effects in different modules or avoid naming conflicts between different effect families. Algae provides custom root enum names to solve this problem elegantly.
+
+##### **Custom root enums**: Use `effect! { root CustomOp; ... }` to avoid naming conflicts
+
+By default, the `effect!` macro generates a root enum called `Op`. However, when you need multiple effect declarations in the same scope, you can specify a custom root enum name:
+
+```rust
+// Instead of the default Op enum, use ConsoleOp
+effect! {
+    root ConsoleOp;
+    Console::Print (String) -> ();
+    Console::ReadLine -> String;
+}
+
+// This generates:
+// - enum Console { Print(String), ReadLine }
+// - enum ConsoleOp { Console(Console) }  // Custom root instead of Op
+// - impl From<Console> for ConsoleOp { ... }
+```
+
+This feature is essential when:
+- Building modular effect systems
+- Avoiding naming conflicts in large codebases
+- Creating reusable effect libraries
+- Separating concerns between different domains
+
+##### **Flexible attributes**: `#[effectful(root = CustomOp)]` works with custom root types
+
+The `#[effectful]` attribute macro seamlessly adapts to your custom root types:
+
+```rust
+effect! {
+    root FileSystemOp;
+    FS::Read (String) -> Result<String, std::io::Error>;
+    FS::Write ((String, String)) -> Result<(), std::io::Error>;
+}
+
+// The #[effectful] macro automatically uses FileSystemOp
+#[effectful(root = FileSystemOp)]
+fn process_config(path: String) -> Result<String, std::io::Error> {
+    let content: Result<String, std::io::Error> = perform!(FS::Read(path.clone()));
+    let content = content?;
+    
+    let processed = content.to_uppercase();
+    let _: Result<(), std::io::Error> = perform!(FS::Write((
+        format!("{}.processed", path),
+        processed.clone()
+    )))?;
+    
+    Ok(processed)
+}
+// Returns: Effectful<Result<String, std::io::Error>, FileSystemOp>
+```
+
+Key points about `#[effectful(root = CustomOp)]`:
+- **Automatic type inference**: The macro determines the correct root type
+- **Type safety**: Compile-time verification that effects match the root
+- **Seamless integration**: Works identically to the default `Op` case
+- **Handler compatibility**: Handlers implement `Handler<CustomOp>` instead of `Handler<Op>`
+
+##### **Multiple effect families**: Organize large codebases with modular effect declarations
+
+Custom root enums enable sophisticated architectural patterns for large applications:
+
+```rust
+// Domain-specific effect families
+effect! {
+    root AuthOp;
+    Auth::Login ((String, String)) -> Result<User, AuthError>;
+    Auth::Logout -> ();
+    Auth::CheckPermission (Permission) -> bool;
+}
+
+effect! {
+    root DataOp;
+    Db::Query (String) -> Vec<Row>;
+    Db::Execute (String) -> Result<u64, DbError>;
+    Cache::Get (String) -> Option<String>;
+    Cache::Set ((String, String)) -> ();
+}
+
+effect! {
+    root BusinessOp;
+    Order::Create (OrderRequest) -> Result<Order, BusinessError>;
+    Order::Process (OrderId) -> Result<(), BusinessError>;
+    Inventory::Check (ProductId) -> u32;
+    Inventory::Reserve ((ProductId, u32)) -> Result<(), BusinessError>;
+}
+
+// Combine all effects for the application
+algae::combine_roots!(pub AppOp = AuthOp, DataOp, BusinessOp);
+
+// Now you can write handlers that compose different domains
+struct AppHandler {
+    auth: AuthHandler,
+    data: DataHandler,
+    business: BusinessHandler,
+}
+
+impl Handler<AppOp> for AppHandler {
+    fn handle(&mut self, op: &AppOp) -> Box<dyn std::any::Any + Send> {
+        match op {
+            AppOp::AuthOp(auth_op) => self.auth.handle(auth_op),
+            AppOp::DataOp(data_op) => self.data.handle(data_op),
+            AppOp::BusinessOp(business_op) => self.business.handle(business_op),
+        }
+    }
+}
+
+// Functions can use any combination of effects
+#[effectful(root = AppOp)]
+fn place_order(user_id: UserId, request: OrderRequest) -> Result<Order, String> {
+    // Check authentication
+    let has_permission: bool = perform!(Auth::CheckPermission(Permission::CreateOrder).into());
+    if !has_permission {
+        return Err("Insufficient permissions".to_string());
+    }
+    
+    // Check inventory
+    let available: u32 = perform!(Inventory::Check(request.product_id).into());
+    if available < request.quantity {
+        return Err("Insufficient inventory".to_string());
+    }
+    
+    // Reserve inventory
+    let _: Result<(), BusinessError> = perform!(Inventory::Reserve((
+        request.product_id,
+        request.quantity
+    )).into()).map_err(|e| e.to_string())?;
+    
+    // Create order
+    let order: Result<Order, BusinessError> = perform!(Order::Create(request).into());
+    order.map_err(|e| e.to_string())
+}
+```
+
+Benefits of this approach:
+- **Clear separation**: Each domain has its own effect family
+- **Type safety**: Effects are grouped logically
+- **Modular testing**: Test each domain independently
+- **Team scalability**: Different teams can work on different effect families
+- **Incremental adoption**: Add new effect families without touching existing code
+
+You can use multiple `effect!` declarations in the same module by specifying custom root enum names:
 
 ```rust
 // ✅ Works with custom root names
@@ -1270,6 +1435,7 @@ Algae is designed for minimal runtime overhead:
 - **Stack-Safe**: Uses coroutines instead of recursion for deep effect chains
 - **No GC Pressure**: All allocations are explicit and bounded
 - **Dynamic Typing Overhead**: `Box<dyn Any + Send>` for handler return values
+- **Thread Safety**: Send trait enables zero-cost transfer between threads
 
 ### Performance Considerations
 
@@ -1299,6 +1465,24 @@ We welcome contributions! Please see our contributing guidelines:
 6. Run clippy: `cargo clippy --all-targets -- -D warnings`
 7. Format your code: `cargo fmt`
 8. Submit a pull request
+
+### Development Tools
+
+The project includes a comprehensive Makefile for development:
+
+```bash
+# Quick development workflow
+make dev              # Format, check, and test
+make ci-local         # Run full CI pipeline locally
+make examples         # Check all examples compile
+make test-error-detection  # Verify error cases work correctly
+
+# Individual tasks
+make test             # Run all tests
+make clippy           # Run linting (matches CI)
+make fmt              # Format code
+make doc              # Build documentation
+```
 
 ### Areas for Contribution
 
