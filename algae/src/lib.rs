@@ -242,6 +242,7 @@ impl<Op> Effect<Op> {
     /// // Effect now contains the reply value
     /// ```
     pub fn fill_boxed(&mut self, r: Box<dyn Any + Send>) { 
+        assert!(self.reply.is_none(), "reply filled twice");
         self.reply = Some(r);
     }
     
@@ -1565,5 +1566,79 @@ mod tests {
 
             assert_eq!(result, "Test: 42");
         }
+    }
+
+    // ============================================================================
+    // One-Shot Guarantee Tests
+    // ============================================================================
+
+    #[test]
+    fn test_one_shot_effect_fill() {
+        // Test that filling an effect twice panics (enforcing one-shot guarantee)
+        let mut effect = Effect::new(Test::GetValue);
+        
+        // First fill should succeed
+        effect.fill_boxed(Box::new(42i32));
+        
+        // Second fill should panic
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            effect.fill_boxed(Box::new(24i32));
+        }));
+        
+        assert!(result.is_err(), "Expected panic when filling effect twice");
+        
+        // The panic message should contain our assertion text
+        if let Err(panic_payload) = result {
+            if let Some(panic_str) = panic_payload.downcast_ref::<&str>() {
+                assert!(panic_str.contains("reply filled twice"), 
+                    "Panic message should mention 'reply filled twice', got: {}", panic_str);
+            } else if let Some(panic_string) = panic_payload.downcast_ref::<String>() {
+                assert!(panic_string.contains("reply filled twice"), 
+                    "Panic message should mention 'reply filled twice', got: {}", panic_string);
+            }
+        }
+    }
+
+    #[test]
+    fn test_one_shot_effect_get_reply_without_fill() {
+        // Test that get_reply panics when no reply has been filled
+        let effect = Effect::new(Test::GetValue);
+        
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = effect.get_reply();
+        }));
+        
+        assert!(result.is_err(), "Expected panic when calling get_reply on unfilled effect");
+    }
+
+    #[test]
+    fn test_one_shot_reply_take_wrong_type() {
+        // Test that Reply::take panics with wrong type (additional safety check)
+        let mut effect = Effect::new(Test::GetValue);
+        effect.fill_boxed(Box::new(42i32));
+        
+        let reply = effect.get_reply();
+        
+        // Try to take with wrong type should panic
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _: String = reply.take();
+        }));
+        
+        assert!(result.is_err(), "Expected panic when taking reply with wrong type");
+    }
+
+    #[test]
+    fn test_one_shot_fill_and_get_success() {
+        // Test the happy path: fill once, get once - should work perfectly
+        let mut effect = Effect::new(Test::GetValue);
+        
+        // Fill with a value
+        effect.fill_boxed(Box::new(42i32));
+        
+        // Get reply and extract value
+        let reply = effect.get_reply();
+        let value: i32 = reply.take();
+        
+        assert_eq!(value, 42);
     }
 }
