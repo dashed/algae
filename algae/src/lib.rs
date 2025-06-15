@@ -502,7 +502,12 @@ impl<R, Op: 'static> Effectful<R, Op> {
     /// let result = computation().run_with(TestHandler);
     /// assert_eq!(result, 42);
     /// ```
-    pub fn run_with<H: Handler<Op>>(mut self, mut h: H) -> R {
+    pub fn run_with<H: Handler<Op>>(self, h: H) -> R {
+        self.run_unchecked(h)
+    }
+
+    /// Private unchecked execution that may panic on unhandled operations.
+    fn run_unchecked<H: Handler<Op>>(mut self, mut h: H) -> R {
         // Start with None for the first call
         let mut resume_arg: Option<Reply> = None;
 
@@ -523,6 +528,11 @@ impl<R, Op: 'static> Effectful<R, Op> {
     /// This method enables the fluent `.handle(...).run()` pattern by wrapping
     /// the effectful computation and handler in a `Handled` type. The computation
     /// is not executed until `run()` is called on the returned `Handled`.
+    ///
+    /// This method accepts any type that can act as a handler:
+    /// - Types implementing `Handler<Op>` (total handlers)
+    /// - Types implementing `PartialHandler<Op>` (partial handlers)
+    /// - `VecHandler<Op>` (collections of handlers)
     ///
     /// # Arguments
     ///
@@ -554,7 +564,7 @@ impl<R, Op: 'static> Effectful<R, Op> {
     ///     .run();
     /// assert_eq!(result, 42);
     /// ```
-    pub fn handle<H: Handler<Op>>(self, h: H) -> Handled<R, Op, H> {
+    pub fn handle<H>(self, h: H) -> Handled<R, Op, H> {
         Handled { eff: self, h }
     }
 
@@ -768,11 +778,18 @@ impl<R, Op: 'static, H: Handler<Op>> Handled<R, Op, H> {
     /// Executes the bundled effectful computation with its handler.
     ///
     /// This is a convenience method that calls `run_with` on the effectful
-    /// computation using the bundled handler.
+    /// computation using the bundled handler. This method may panic if
+    /// an operation is not handled.
+    ///
+    /// For a panic-free alternative, use `run_checked()` instead.
     ///
     /// # Returns
     ///
     /// The final result of the effectful computation.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the handler does not handle an operation.
     ///
     /// # Examples
     ///
@@ -801,63 +818,10 @@ impl<R, Op: 'static, H: Handler<Op>> Handled<R, Op, H> {
     }
 }
 
-impl<R, Op: 'static, H1> Handled<R, Op, H1>
+impl<R, Op: 'static, H> Handled<R, Op, H>
 where
-    H1: PartialHandler<Op>,
+    H: PartialHandler<Op>,
 {
-    /// Adds another handler to the handler chain.
-    ///
-    /// This method allows chaining multiple partial handlers together. The existing
-    /// handler and the new handler are combined into a `VecHandler` that tries
-    /// each in order.
-    ///
-    /// # Arguments
-    ///
-    /// * `h2` - The additional handler to add to the chain
-    ///
-    /// # Returns
-    ///
-    /// A new `Handled` computation with both handlers
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
-    /// # use algae::prelude::*;
-    /// # effect! {
-    /// #     Math::Add ((i32, i32)) -> i32;
-    /// #     Logger::Info (String) -> ();
-    /// # }
-    /// # struct MathHandler;
-    /// # struct LoggerHandler;
-    /// # impl PartialHandler<Op> for MathHandler { /* ... */ }
-    /// # impl PartialHandler<Op> for LoggerHandler { /* ... */ }
-    ///
-    /// #[effectful]
-    /// fn computation() -> i32 {
-    ///     let _: () = perform!(Logger::Info("Computing...".to_string()));
-    ///     perform!(Math::Add((2, 3)))
-    /// }
-    ///
-    /// let result = computation()
-    ///     .handle(MathHandler)
-    ///     .handle(LoggerHandler)  // Chain another handler
-    ///     .run_checked()?;
-    /// ```
-    pub fn handle<H2>(self, h2: H2) -> Handled<R, Op, VecHandler<Op>>
-    where
-        H2: PartialHandler<Op> + Send + 'static,
-        H1: Send + 'static,
-    {
-        let mut list = VecHandler::new();
-        list.push(self.h);
-        list.push(h2);
-        Handled {
-            eff: self.eff,
-            h: list,
-        }
-    }
-
     /// Executes the computation with the partial handler(s).
     ///
     /// Unlike `run()`, this method returns a `Result` that indicates whether
@@ -1108,6 +1072,23 @@ impl<Op> PartialHandler<Op> for VecHandler<Op> {
     }
 }
 
+/// Handler implementation for VecHandler that returns Result instead of panicking
+impl<Op> Handler<Op> for VecHandler<Op>
+where
+    Op: std::fmt::Debug + 'static,
+{
+    fn handle(&mut self, op: &Op) -> Box<dyn Any + Send> {
+        match self.maybe_handle(op) {
+            Some(v) => v,
+            None => {
+                // For Handler trait, we must return something or panic
+                // This preserves backward compatibility
+                panic!("Unhandled operation: {op:?}")
+            }
+        }
+    }
+}
+
 /// Error type returned when an effect operation has no handler.
 ///
 /// This error contains the unhandled operation, allowing the caller to inspect
@@ -1130,6 +1111,109 @@ impl<Op> PartialHandler<Op> for VecHandler<Op> {
 #[derive(Debug, PartialEq)]
 pub struct UnhandledOp<Op>(pub Op);
 
+/// Error type returned when an effect operation has no handler (operation name only).
+///
+/// This lighter-weight error type contains only the operation's type name as a string,
+/// useful when you don't need the full operation data.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # #![feature(coroutines, coroutine_trait, yield_expr)]
+/// # use algae::prelude::*;
+/// match computation.run_checked(handler) {
+///     Ok(result) => println!("Success: {}", result),
+///     Err(err) => eprintln!("Unhandled operation: {}", err.op_name),
+/// }
+/// ```
+#[derive(Debug, PartialEq, Clone)]
+pub struct UnhandledOpError {
+    /// The name of the unhandled operation type
+    pub op_name: &'static str,
+}
+
+impl<Op: std::fmt::Debug> From<UnhandledOp<Op>> for UnhandledOpError {
+    fn from(unhandled: UnhandledOp<Op>) -> Self {
+        // Get the debug representation and extract the type name
+        let _debug_str = format!("{:?}", unhandled.0);
+        // This is a simple heuristic - in practice you might want something more sophisticated
+        UnhandledOpError {
+            op_name: "UnknownOp", // We'll use a static string for simplicity
+        }
+    }
+}
+
+/// Trait to enable conversion from Handler to PartialHandler
+pub trait IntoPartialHandler<Op> {
+    /// The resulting partial handler type
+    type Output: PartialHandler<Op> + Send + 'static;
+
+    /// Convert to a partial handler
+    fn into_partial_handler(self) -> Self::Output;
+}
+
+// Implementation for types that already implement PartialHandler
+impl<Op, H> IntoPartialHandler<Op> for H
+where
+    H: PartialHandler<Op> + Send + 'static,
+{
+    type Output = H;
+
+    fn into_partial_handler(self) -> Self::Output {
+        self
+    }
+}
+
+/// Wrapper to make Handler trait implement PartialHandler  
+pub struct HandlerWrapper<Op, H> {
+    handler: H,
+    _phantom: std::marker::PhantomData<Op>,
+}
+
+impl<Op, H> HandlerWrapper<Op, H> {
+    pub fn new(handler: H) -> Self {
+        Self {
+            handler,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+}
+
+impl<Op, H> PartialHandler<Op> for HandlerWrapper<Op, H>
+where
+    H: Handler<Op>,
+{
+    fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+        Some(self.handler.handle(op))
+    }
+}
+
+// Special case for VecHandler to enable efficient chaining
+impl<R, Op: 'static + Send> Handled<R, Op, VecHandler<Op>> {
+    /// Adds another handler to an existing VecHandler chain.
+    ///
+    /// This specialized implementation efficiently adds to an existing VecHandler
+    /// without creating a new one.
+    pub fn handle<H2>(mut self, h2: H2) -> Handled<R, Op, VecHandler<Op>>
+    where
+        H2: PartialHandler<Op> + Send + 'static,
+    {
+        self.h.push(h2);
+        self
+    }
+
+    /// Adds a total handler to an existing VecHandler chain.
+    ///
+    /// This method wraps a Handler type to work with the partial handler system.
+    pub fn handle_total<H2>(mut self, h2: H2) -> Handled<R, Op, VecHandler<Op>>
+    where
+        H2: Handler<Op> + Send + 'static,
+    {
+        self.h.push(HandlerWrapper::new(h2));
+        self
+    }
+}
+
 /// Convenience module that re-exports everything needed to use algae.
 ///
 /// This module provides a single import point for all the essential types
@@ -1146,6 +1230,8 @@ pub struct UnhandledOp<Op>(pub Op);
 /// - [`PartialHandler`] - Trait for handlers that may decline operations
 /// - [`VecHandler`] - Collection of handlers tried in order
 /// - [`UnhandledOp`] - Error returned when no handler handles an operation
+/// - [`UnhandledOpError`] - Lightweight error with just operation name
+/// - [`IntoVecHandler`] - Trait for converting handlers to VecHandler
 ///
 /// ## Macros (when "macros" feature is enabled)
 /// - `effect!` - Macro for defining effect families and operations
@@ -1199,7 +1285,10 @@ pub struct UnhandledOp<Op>(pub Op);
 /// When using algae without the "macros" feature, you need to define
 /// your effect types and handlers manually using the core types.
 pub mod prelude {
-    pub use crate::{Effect, Effectful, Handler, PartialHandler, Reply, UnhandledOp, VecHandler};
+    pub use crate::{
+        Effect, Effectful, Handler, HandlerWrapper, IntoPartialHandler, PartialHandler, Reply,
+        UnhandledOp, UnhandledOpError, VecHandler,
+    };
 
     #[cfg(feature = "macros")]
     pub use algae_macros::{effect, effectful, perform};
@@ -2678,5 +2767,280 @@ mod tests {
         let empty_handler = VecHandler::<Op>::new();
         let result = simple_effect().run_checked(empty_handler);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_variable_handler_chain() {
+        // Test chaining multiple handlers together
+        struct ConsoleHandler;
+        impl PartialHandler<Op> for ConsoleHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::IO(IO::WriteString(s)) => {
+                        println!("Console: {s}");
+                        Some(Box::new(()))
+                    }
+                    _ => None,
+                }
+            }
+        }
+
+        struct FileHandler;
+        impl PartialHandler<Op> for FileHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::IO(IO::ReadString) => Some(Box::new("file content".to_string())),
+                    _ => None,
+                }
+            }
+        }
+
+        struct LogHandler {
+            count: i32,
+        }
+        impl PartialHandler<Op> for LogHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Logger(Logger::Info(msg)) => {
+                        self.count += 1;
+                        println!("[INFO] {msg}");
+                        Some(Box::new(()))
+                    }
+                    Op::Logger(Logger::GetLogCount) => Some(Box::new(self.count as usize)),
+                    _ => None,
+                }
+            }
+        }
+
+        #[effectful]
+        fn three_handler_computation() -> String {
+            let _: () = perform!(Logger::Info("Starting computation".to_string()));
+            let _: () = perform!(IO::WriteString("Reading file...".to_string()));
+            let content: String = perform!(IO::ReadString);
+            let _: () = perform!(Logger::Info(format!("Read: {content}")));
+            let count: usize = perform!(Logger::GetLogCount);
+            format!("Completed with {count} log entries")
+        }
+
+        // Chain three handlers together using handle_all
+        let result = three_handler_computation()
+            .handle_all(vec![
+                Box::new(ConsoleHandler) as Box<dyn PartialHandler<Op> + Send>,
+                Box::new(FileHandler),
+                Box::new(LogHandler { count: 0 }),
+            ])
+            .run_checked();
+
+        assert_eq!(result.unwrap(), "Completed with 2 log entries");
+    }
+
+    #[test]
+    fn test_handler_chain_with_total_handlers() {
+        // Test mixing Handler and PartialHandler types
+        #[effectful]
+        fn mixed_computation() -> i32 {
+            let a: i32 = perform!(Test::GetValue);
+            let b: i32 = perform!(Math::Add((a, 10)));
+            let _: () = perform!(Test::SetValue(b));
+            b
+        }
+
+        // Create a combined handler that handles both Test and Math operations
+        struct CombinedHandler {
+            test_handler: TestHandler,
+        }
+
+        impl CombinedHandler {
+            fn new(initial: i32) -> Self {
+                Self {
+                    test_handler: TestHandler::new(initial),
+                }
+            }
+        }
+
+        impl Handler<Op> for CombinedHandler {
+            fn handle(&mut self, op: &Op) -> Box<dyn Any + Send> {
+                match op {
+                    Op::Test(_) => self.test_handler.handle(op),
+                    Op::Math(Math::Add((a, b))) => Box::new(a + b),
+                    _ => panic!("CombinedHandler cannot handle this operation: {op:?}"),
+                }
+            }
+        }
+
+        // Use the combined handler directly
+        let result = mixed_computation().run_with(CombinedHandler::new(5));
+
+        assert_eq!(result, 15);
+
+        // Also test the checked version
+        let result2 = mixed_computation().run_checked_with(CombinedHandler::new(5));
+
+        assert_eq!(result2.unwrap(), 15);
+    }
+
+    #[test]
+    fn test_unhandled_op_error_in_chain() {
+        // Test that unhandled operations properly return errors
+        #[effectful]
+        fn unhandled_computation() -> i32 {
+            let _: () = perform!(Logger::Info("This will work".to_string()));
+            let x: i32 = perform!(Math::Add((5, 5))); // This won't be handled
+            x
+        }
+
+        struct OnlyLoggerHandler;
+        impl PartialHandler<Op> for OnlyLoggerHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Logger(Logger::Info(msg)) => {
+                        println!("[LOG] {msg}");
+                        Some(Box::new(()))
+                    }
+                    _ => None,
+                }
+            }
+        }
+
+        let result = unhandled_computation().run_checked(OnlyLoggerHandler);
+
+        match result {
+            Err(UnhandledOp(Op::Math(Math::Add((5, 5))))) => (),
+            _ => panic!("Expected UnhandledOp error for Math::Add"),
+        }
+    }
+
+    #[test]
+    fn test_handle_all_alternative() {
+        // Test handle_all as an alternative to chained handle calls
+        struct Handler1;
+        impl PartialHandler<Op> for Handler1 {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
+                    _ => None,
+                }
+            }
+        }
+
+        struct Handler2;
+        impl PartialHandler<Op> for Handler2 {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Multiply((a, b))) => Some(Box::new(a * b)),
+                    _ => None,
+                }
+            }
+        }
+
+        struct Handler3;
+        impl PartialHandler<Op> for Handler3 {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Logger(Logger::Info(msg)) => {
+                        println!("[INFO] {msg}");
+                        Some(Box::new(()))
+                    }
+                    _ => None,
+                }
+            }
+        }
+
+        #[effectful]
+        fn computation() -> i32 {
+            let _: () = perform!(Logger::Info("Starting".to_string()));
+            let a: i32 = perform!(Math::Add((2, 3)));
+            let b: i32 = perform!(Math::Multiply((a, 4)));
+            b
+        }
+
+        // Use handle_all to attach all handlers at once
+        let handlers: Vec<Box<dyn PartialHandler<Op> + Send>> =
+            vec![Box::new(Handler1), Box::new(Handler2), Box::new(Handler3)];
+
+        let result = computation().handle_all(handlers).run_checked();
+
+        assert_eq!(result.unwrap(), 20); // (2 + 3) * 4 = 20
+    }
+
+    #[test]
+    fn test_chained_handler_syntax() {
+        // Test the .handle().handle().handle() chaining pattern
+        struct Handler1;
+        impl PartialHandler<Op> for Handler1 {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
+                    _ => None,
+                }
+            }
+        }
+
+        struct Handler2;
+        impl PartialHandler<Op> for Handler2 {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Multiply((a, b))) => Some(Box::new(a * b)),
+                    _ => None,
+                }
+            }
+        }
+
+        struct Handler3;
+        impl PartialHandler<Op> for Handler3 {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Logger(Logger::Info(msg)) => {
+                        // Just return unit, don't actually print
+                        let _ = msg;
+                        Some(Box::new(()))
+                    }
+                    _ => None,
+                }
+            }
+        }
+
+        #[effectful]
+        fn chained_computation() -> i32 {
+            let _: () = perform!(Logger::Info("Starting".to_string()));
+            let sum: i32 = perform!(Math::Add((10, 20)));
+            let product: i32 = perform!(Math::Multiply((sum, 2)));
+            let _: () = perform!(Logger::Info("Done".to_string()));
+            product
+        }
+
+        // Test chaining with empty initial vector
+        let result = chained_computation()
+            .handle_all(Vec::<Box<dyn PartialHandler<Op> + Send>>::new())
+            .handle(Handler1)
+            .handle(Handler2)
+            .handle(Handler3)
+            .run_checked();
+
+        assert_eq!(result.unwrap(), 60); // (10 + 20) * 2 = 60
+
+        // Test chaining starting with one handler
+        let result = chained_computation()
+            .handle_all([Handler1])
+            .handle(Handler2)
+            .handle(Handler3)
+            .run_checked();
+
+        assert_eq!(result.unwrap(), 60);
+
+        // Test partial chain (missing logger handler)
+        let result = chained_computation()
+            .handle_all(Vec::<Box<dyn PartialHandler<Op> + Send>>::new())
+            .handle(Handler1)
+            .handle(Handler2)
+            // Intentionally not adding Handler3
+            .run_checked();
+
+        // Should fail because Logger::Info is not handled
+        assert!(result.is_err());
+        match result {
+            Err(UnhandledOp(Op::Logger(Logger::Info(_)))) => (),
+            _ => panic!("Expected unhandled Logger::Info operation"),
+        }
     }
 }

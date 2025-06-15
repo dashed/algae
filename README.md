@@ -817,7 +817,7 @@ Complete example showing how to use algae without any macros - pure explicit syn
 ### Run All Examples
 ```bash
 # Run core examples demonstrating main features
-for example in readme explicit_vs_convenient multiple_effects_demo test_send_across_threads advanced theory pure console partial_handlers effect_test minimal; do
+for example in readme explicit_vs_convenient multiple_effects_demo test_send_across_threads advanced theory pure console partial_handlers variable_handler_chain chained_handlers effect_test minimal; do
     echo "=== Running $example ==="
     cargo run --example $example
     echo
@@ -1431,7 +1431,57 @@ fn batch_process(items: Vec<String>) -> Vec<Result<String, String>> {
 
 ### Partial Handlers and Safe Composition
 
-Algae supports **partial handlers** that can selectively handle operations, enabling safe effect composition without panics:
+Algae supports **partial handlers** that can selectively handle operations, enabling safe effect composition without panics.
+
+#### Variable-Length Handler Chains
+
+The library now supports chaining an arbitrary number of handlers together:
+
+```rust
+// Using handle_all to attach multiple handlers at once
+let result = computation()
+    .handle_all(vec![
+        Box::new(ConsoleHandler),
+        Box::new(FileHandler),
+        Box::new(LoggerHandler),
+    ])
+    .run_checked()?;
+
+// Chaining handlers one by one
+let result = computation()
+    .handle_all(vec![])  // Start with empty VecHandler
+    .handle(ConsoleHandler)
+    .handle(FileHandler)
+    .handle(LoggerHandler)
+    .run_checked()?;
+
+// Starting with one handler and adding more
+let result = computation()
+    .handle_all([ConsoleHandler])  // Start with one
+    .handle(FileHandler)           // Add another
+    .handle(LoggerHandler)         // And another
+    .run_checked()?;
+
+// Building handler chain dynamically
+let mut handled = computation().handle_all([ConsoleHandler]);
+if need_file_ops {
+    handled = handled.handle(FileHandler);
+}
+if need_logging {
+    handled = handled.handle(LoggerHandler);
+}
+let result = handled.run_checked()?;
+
+// Or build a VecHandler manually for more control
+let mut handlers = VecHandler::new();
+handlers.push(ConsoleHandler);
+handlers.push(FileHandler);
+handlers.push(LoggerHandler);
+
+let result = computation().run_checked(handlers)?;
+```
+
+#### Handler Types
 
 ```rust
 // Define partial handlers that only handle specific operations
@@ -1521,7 +1571,10 @@ impl PartialHandler<Op> for SelectiveHandler {
 let result = computation.run_checked_with(TotalHandler)?;
 ```
 
-> **📁 Working Example**: See [`examples/partial_handlers.rs`](algae/examples/partial_handlers.rs) for comprehensive demonstrations of partial handlers, including handler composition, ordering, and error handling.
+> **📁 Working Examples**: 
+> - [`examples/partial_handlers.rs`](algae/examples/partial_handlers.rs) - Comprehensive demonstrations of partial handlers
+> - [`examples/variable_handler_chain.rs`](algae/examples/variable_handler_chain.rs) - Variable-length handler chains with zero-panic execution
+> - [`examples/chained_handlers.rs`](algae/examples/chained_handlers.rs) - Demonstrates the `.handle().handle().handle()` chaining syntax
 
 ## 🔬 Performance
 
