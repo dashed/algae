@@ -7,11 +7,11 @@ effect! {
     // File operations
     FileSystem::Read (String) -> Result<String, std::io::Error>;
     FileSystem::Write ((String, String)) -> Result<(), std::io::Error>;
-    
+
     // Database operations (simplified for demo)
     Database::Query (String) -> Vec<String>;
     Database::Execute (String) -> Result<u64, String>;
-    
+
     // Logging operations
     Logger::Info (String) -> ();
     Logger::Error (String) -> ();
@@ -25,14 +25,15 @@ type Row = String;
 #[effectful]
 fn process_file(filename: String) -> Result<usize, String> {
     let _: () = perform!(Logger::Info(format!("Processing {}", filename)));
-    
+
     let content: Result<String, std::io::Error> = perform!(FileSystem::Read(filename.clone()));
     let content = content.map_err(|e| format!("Read error: {}", e))?;
-    
-    let rows: Vec<String> = perform!(Database::Query(
-        format!("INSERT INTO files (name, content) VALUES ('{}', '{}')", filename, content)
-    ));
-    
+
+    let rows: Vec<String> = perform!(Database::Query(format!(
+        "INSERT INTO files (name, content) VALUES ('{}', '{}')",
+        filename, content
+    )));
+
     let _: () = perform!(Logger::Info(format!("Inserted {} rows", rows.len())));
     Ok(rows.len())
 }
@@ -46,9 +47,12 @@ struct ProductionHandler {
 impl ProductionHandler {
     fn new() -> Self {
         let mut files = HashMap::new();
-        files.insert("test.txt".to_string(), "Hello, World!\nThis is a test file.".to_string());
+        files.insert(
+            "test.txt".to_string(),
+            "Hello, World!\nThis is a test file.".to_string(),
+        );
         files.insert("data.txt".to_string(), "Line 1\nLine 2\nLine 3".to_string());
-        
+
         Self {
             files,
             logs: Vec::new(),
@@ -65,7 +69,7 @@ impl Handler<Op> for ProductionHandler {
                 } else {
                     Box::new(Err::<String, std::io::Error>(std::io::Error::new(
                         std::io::ErrorKind::NotFound,
-                        "File not found"
+                        "File not found",
                     )))
                 }
             }
@@ -112,13 +116,11 @@ impl MockHandler {
         Self {
             files: HashMap::new(),
             logs: Vec::new(),
-            db_responses: vec![
-                vec!["Mock row 1".to_string(), "Mock row 2".to_string()],
-            ],
+            db_responses: vec![vec!["Mock row 1".to_string(), "Mock row 2".to_string()]],
             db_index: std::cell::RefCell::new(0),
         }
     }
-    
+
     fn with_file(mut self, path: String, content: String) -> Self {
         self.files.insert(path, content);
         self
@@ -129,10 +131,9 @@ impl Handler<Op> for MockHandler {
     fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
         match op {
             Op::FileSystem(FileSystem::Read(path)) => {
-                Box::new(self.files.get(path).cloned()
-                    .ok_or_else(|| std::io::Error::new(
-                        std::io::ErrorKind::NotFound, "File not found"
-                    )))
+                Box::new(self.files.get(path).cloned().ok_or_else(|| {
+                    std::io::Error::new(std::io::ErrorKind::NotFound, "File not found")
+                }))
             }
             Op::FileSystem(FileSystem::Write((path, content))) => {
                 self.files.insert(path.clone(), content.clone());
@@ -148,9 +149,7 @@ impl Handler<Op> for MockHandler {
                 *index += 1;
                 Box::new(response)
             }
-            Op::Database(Database::Execute(_sql)) => {
-                Box::new(Ok::<u64, String>(1))
-            }
+            Op::Database(Database::Execute(_sql)) => Box::new(Ok::<u64, String>(1)),
             Op::Logger(Logger::Info(msg)) => {
                 self.logs.push(format!("MOCK INFO: {}", msg));
                 Box::new(())
@@ -164,16 +163,18 @@ impl Handler<Op> for MockHandler {
 }
 
 // Additional effectful functions demonstrating composition
-#[effectful] 
+#[effectful]
 fn batch_process(filenames: Vec<String>) -> Vec<Result<usize, String>> {
     let _: () = perform!(Logger::Info("Starting batch processing".to_string()));
-    
+
     let mut results = Vec::new();
     for filename in filenames {
-        let result = process_file(filename).handle(ProductionHandler::new()).run();
+        let result = process_file(filename)
+            .handle(ProductionHandler::new())
+            .run();
         results.push(result);
     }
-    
+
     let _: () = perform!(Logger::Info(format!("Processed {} files", results.len())));
     results
 }
@@ -181,65 +182,63 @@ fn batch_process(filenames: Vec<String>) -> Vec<Result<usize, String>> {
 #[effectful]
 fn create_report() -> String {
     let _: () = perform!(Logger::Info("Generating report".to_string()));
-    
+
     let data: Vec<String> = perform!(Database::Query("SELECT * FROM processed_files".to_string()));
     let report = format!("Report: Found {} records", data.len());
-    
+
     let _: Result<(), std::io::Error> = perform!(FileSystem::Write((
         "report.txt".to_string(),
         report.clone()
     )));
-    
+
     let _: () = perform!(Logger::Info("Report generated successfully".to_string()));
     report
 }
 
 fn main() {
     println!("=== Advanced Algae Example ===\n");
-    
+
     // Example 1: Single file processing with production handler
     println!("1. Processing single file:");
     let result = process_file("test.txt".to_string())
         .handle(ProductionHandler::new())
         .run();
-    
+
     match result {
         Ok(count) => println!("   Successfully processed file, inserted {} rows", count),
         Err(e) => println!("   Error: {}", e),
     }
-    
+
     // Example 2: Testing with mock handler
     println!("\n2. Testing with mock handler:");
-    let mock_handler = MockHandler::new()
-        .with_file("test.txt".to_string(), "mock file content".to_string());
-        
+    let mock_handler =
+        MockHandler::new().with_file("test.txt".to_string(), "mock file content".to_string());
+
     let mock_result = process_file("test.txt".to_string())
         .handle(mock_handler)
         .run();
-        
+
     match mock_result {
         Ok(count) => println!("   Mock test passed, processed {} rows", count),
         Err(e) => println!("   Mock test failed: {}", e),
     }
-    
+
     // Example 3: Report generation
     println!("\n3. Generating report:");
-    let report = create_report()
-        .handle(ProductionHandler::new())
-        .run();
+    let report = create_report().handle(ProductionHandler::new()).run();
     println!("   {}", report);
-    
+
     // Example 4: Error handling
     println!("\n4. Error handling (non-existent file):");
     let error_result = process_file("nonexistent.txt".to_string())
         .handle(ProductionHandler::new())
         .run();
-        
+
     match error_result {
         Ok(_) => println!("   Unexpected success"),
         Err(e) => println!("   Expected error: {}", e),
     }
-    
+
     println!("\n=== Example completed successfully! ===");
 }
 
@@ -247,28 +246,28 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_process_file() {
         let mut handler = MockHandler::new();
-        handler.files.insert("test.txt".to_string(), "test content".to_string());
-        
-        let result = process_file("test.txt".to_string())
-            .handle(handler)
-            .run();
-        
+        handler
+            .files
+            .insert("test.txt".to_string(), "test content".to_string());
+
+        let result = process_file("test.txt".to_string()).handle(handler).run();
+
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 2); // Mock returns 2 rows
     }
-    
+
     #[test]
     fn test_file_not_found() {
         let handler = MockHandler::new();
-        
+
         let result = process_file("missing.txt".to_string())
             .handle(handler)
             .run();
-        
+
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Read error"));
     }

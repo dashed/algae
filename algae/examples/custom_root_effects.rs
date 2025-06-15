@@ -1,5 +1,5 @@
 //! Demonstrating custom root enum names in effect! macro
-//! 
+//!
 //! This example shows how to use the new `root EnumName;` syntax to avoid
 //! conflicts when using multiple effect! macros in the same module.
 
@@ -39,80 +39,93 @@ effect! {
 
 // This function uses ConsoleOp
 fn console_demo() -> algae::Effectful<String, ConsoleOp> {
-    algae::Effectful::new(#[coroutine] move |mut _reply: Option<algae::Reply>| {
-        // Clear screen
-        {
-            let effect = algae::Effect::new(Console::Clear.into());
-            let reply_opt = yield effect;
-            let _: () = reply_opt.unwrap().take::<()>();
-        }
-        
-        // Print prompt
-        {
-            let effect = algae::Effect::new(Console::Print("Enter your name:".to_string()).into());
-            let reply_opt = yield effect;
-            let _: () = reply_opt.unwrap().take::<()>();
-        }
-        
-        // Read input
-        let name: String = {
-            let effect = algae::Effect::new(Console::ReadLine.into());
-            let reply_opt = yield effect;
-            reply_opt.unwrap().take::<String>()
-        };
-        
-        format!("Hello, {}!", name)
-    })
+    algae::Effectful::new(
+        #[coroutine]
+        move |mut _reply: Option<algae::Reply>| {
+            // Clear screen
+            {
+                let effect = algae::Effect::new(Console::Clear.into());
+                let reply_opt = yield effect;
+                let _: () = reply_opt.unwrap().take::<()>();
+            }
+
+            // Print prompt
+            {
+                let effect =
+                    algae::Effect::new(Console::Print("Enter your name:".to_string()).into());
+                let reply_opt = yield effect;
+                let _: () = reply_opt.unwrap().take::<()>();
+            }
+
+            // Read input
+            let name: String = {
+                let effect = algae::Effect::new(Console::ReadLine.into());
+                let reply_opt = yield effect;
+                reply_opt.unwrap().take::<String>()
+            };
+
+            format!("Hello, {}!", name)
+        },
+    )
 }
 
 // This function uses MathOp
 fn math_demo(a: i32, b: i32) -> algae::Effectful<i32, MathOp> {
-    algae::Effectful::new(#[coroutine] move |mut _reply: Option<algae::Reply>| {
-        // Add numbers
-        let sum: i32 = {
-            let effect = algae::Effect::new(Math::Add((a, b)).into());
-            let reply_opt = yield effect;
-            reply_opt.unwrap().take::<i32>()
-        };
-        
-        // Multiply by 2
-        let doubled: i32 = {
-            let effect = algae::Effect::new(Math::Multiply((sum, 2)).into());
-            let reply_opt = yield effect;
-            reply_opt.unwrap().take::<i32>()
-        };
-        
-        doubled
-    })
+    algae::Effectful::new(
+        #[coroutine]
+        move |mut _reply: Option<algae::Reply>| {
+            // Add numbers
+            let sum: i32 = {
+                let effect = algae::Effect::new(Math::Add((a, b)).into());
+                let reply_opt = yield effect;
+                reply_opt.unwrap().take::<i32>()
+            };
+
+            // Multiply by 2
+            let doubled: i32 = {
+                let effect = algae::Effect::new(Math::Multiply((sum, 2)).into());
+                let reply_opt = yield effect;
+                reply_opt.unwrap().take::<i32>()
+            };
+
+            doubled
+        },
+    )
 }
 
 // This function uses FileOp
 fn file_demo(filename: String) -> algae::Effectful<String, FileOp> {
-    algae::Effectful::new(#[coroutine] move |mut _reply: Option<algae::Reply>| {
-        // Try to read file
-        let content: Result<String, String> = {
-            let effect = algae::Effect::new(File::Read(filename.clone()).into());
-            let reply_opt = yield effect;
-            reply_opt.unwrap().take::<Result<String, String>>()
-        };
-        
-        match content {
-            Ok(data) => data,
-            Err(error) => {
-                // Write error to error log
-                let _: Result<(), String> = {
-                    let effect = algae::Effect::new(File::Write((
-                        "error.log".to_string(), 
-                        format!("Failed to read {}: {}", filename, error)
-                    )).into());
-                    let reply_opt = yield effect;
-                    reply_opt.unwrap().take::<Result<(), String>>()
-                };
-                
-                "default content".to_string()
+    algae::Effectful::new(
+        #[coroutine]
+        move |mut _reply: Option<algae::Reply>| {
+            // Try to read file
+            let content: Result<String, String> = {
+                let effect = algae::Effect::new(File::Read(filename.clone()).into());
+                let reply_opt = yield effect;
+                reply_opt.unwrap().take::<Result<String, String>>()
+            };
+
+            match content {
+                Ok(data) => data,
+                Err(error) => {
+                    // Write error to error log
+                    let _: Result<(), String> = {
+                        let effect = algae::Effect::new(
+                            File::Write((
+                                "error.log".to_string(),
+                                format!("Failed to read {}: {}", filename, error),
+                            ))
+                            .into(),
+                        );
+                        let reply_opt = yield effect;
+                        reply_opt.unwrap().take::<Result<(), String>>()
+                    };
+
+                    "default content".to_string()
+                }
             }
-        }
-    })
+        },
+    )
 }
 
 // ============================================================================
@@ -142,7 +155,10 @@ impl algae::Handler<ConsoleOp> for ConsoleHandler {
             }
             ConsoleOp::Console(Console::ReadLine) => {
                 let mut index = self.index.borrow_mut();
-                let response = self.responses.get(*index).cloned()
+                let response = self
+                    .responses
+                    .get(*index)
+                    .cloned()
                     .unwrap_or_else(|| "default".to_string());
                 *index += 1;
                 println!("[CONSOLE] <input: {}>", response);
@@ -193,7 +209,7 @@ impl FileHandler {
         let mut files = std::collections::HashMap::new();
         files.insert("test.txt".to_string(), "Hello, world!".to_string());
         files.insert("data.txt".to_string(), "Some important data".to_string());
-        
+
         Self { files }
     }
 }
@@ -257,30 +273,35 @@ impl algae::Handler<UnifiedOp> for UnifiedHandler {
 // ============================================================================
 
 fn console_demo_unified() -> algae::Effectful<String, UnifiedOp> {
-    algae::Effectful::new(#[coroutine] move |mut _reply: Option<algae::Reply>| {
-        // Clear screen
-        {
-            let effect = algae::Effect::new(UnifiedOp::ConsoleOp(Console::Clear.into()));
-            let reply_opt = yield effect;
-            let _: () = reply_opt.unwrap().take::<()>();
-        }
-        
-        // Print prompt
-        {
-            let effect = algae::Effect::new(UnifiedOp::ConsoleOp(Console::Print("Enter your name:".to_string()).into()));
-            let reply_opt = yield effect;
-            let _: () = reply_opt.unwrap().take::<()>();
-        }
-        
-        // Read input
-        let name: String = {
-            let effect = algae::Effect::new(UnifiedOp::ConsoleOp(Console::ReadLine.into()));
-            let reply_opt = yield effect;
-            reply_opt.unwrap().take::<String>()
-        };
-        
-        format!("Hello, {}!", name)
-    })
+    algae::Effectful::new(
+        #[coroutine]
+        move |mut _reply: Option<algae::Reply>| {
+            // Clear screen
+            {
+                let effect = algae::Effect::new(UnifiedOp::ConsoleOp(Console::Clear.into()));
+                let reply_opt = yield effect;
+                let _: () = reply_opt.unwrap().take::<()>();
+            }
+
+            // Print prompt
+            {
+                let effect = algae::Effect::new(UnifiedOp::ConsoleOp(
+                    Console::Print("Enter your name:".to_string()).into(),
+                ));
+                let reply_opt = yield effect;
+                let _: () = reply_opt.unwrap().take::<()>();
+            }
+
+            // Read input
+            let name: String = {
+                let effect = algae::Effect::new(UnifiedOp::ConsoleOp(Console::ReadLine.into()));
+                let reply_opt = yield effect;
+                reply_opt.unwrap().take::<String>()
+            };
+
+            format!("Hello, {}!", name)
+        },
+    )
 }
 
 // ============================================================================
@@ -289,35 +310,31 @@ fn console_demo_unified() -> algae::Effectful<String, UnifiedOp> {
 
 fn main() {
     println!("=== Custom Root Effects Demo ===\n");
-    
+
     println!("1. Individual handlers with custom root names:");
-    
+
     // Console demo
     let console_result = console_demo()
         .handle(ConsoleHandler::new(vec!["Alice".to_string()]))
         .run();
     println!("Console result: {}\n", console_result);
-    
+
     // Math demo
-    let math_result = math_demo(10, 5)
-        .handle(MathHandler)
-        .run();
+    let math_result = math_demo(10, 5).handle(MathHandler).run();
     println!("Math result: {}\n", math_result);
-    
+
     // File demo
     let file_result = file_demo("test.txt".to_string())
         .handle(FileHandler::new())
         .run();
     println!("File result: {}\n", file_result);
-    
+
     println!("2. Unified handler using combine_roots! macro:");
-    
+
     // Unified demo
-    let unified_result = console_demo_unified()
-        .handle(UnifiedHandler::new())
-        .run();
+    let unified_result = console_demo_unified().handle(UnifiedHandler::new()).run();
     println!("Unified result: {}\n", unified_result);
-    
+
     println!("=== Key Benefits ===");
     println!("✅ Multiple effect! macros in same module without conflicts");
     println!("✅ Clear separation of concerns with named root enums");

@@ -5,7 +5,7 @@
 //!
 //! This module contains comprehensive tests that verify the algae library respects the fundamental
 //! mathematical properties (called "algebraic laws") that define algebraic effects and handlers.
-//! 
+//!
 //! ## What Are Algebraic Effects?
 //!
 //! Algebraic effects are a programming paradigm that separates **what** you want to do from **how**
@@ -135,11 +135,11 @@ use std::collections::HashMap;
 //══════════════════════════════════════════════════════════════════════════════
 
 // Effects used throughout these tests to demonstrate algebraic laws.
-// 
+//
 // Each effect family represents a different kind of computation:
-// 
+//
 // - **State**: Stateful operations like reading/writing variables
-// - **Pure**: Mathematical operations with no side effects  
+// - **Pure**: Mathematical operations with no side effects
 // - **Exception**: Error handling operations
 // - **Choice**: Non-deterministic selection operations
 //
@@ -149,18 +149,18 @@ effect! {
     // These are NOT commutative - the order of operations matters!
     State::Get -> i32;           // "What's the current value?"
     State::Set (i32) -> ();      // "Set the value to X"
-    
+
     // Pure effects: Mathematical operations with predictable results
     // These ARE commutative when the operations themselves are commutative
     Pure::Identity (i32) -> i32;          // "Return the same value" (identity function)
     Pure::Add ((i32, i32)) -> i32;        // "Add two numbers"
     Pure::Multiply ((i32, i32)) -> i32;   // "Multiply two numbers"
-    
+
     // Exception effects: Error handling operations
     // Used to test how errors interact with other effects
     Exception::Throw (String) -> ();                    // "Signal an error"
     Exception::Catch (String) -> Result<String, String>; // "Try to catch an error"
-    
+
     // Choice effects: Non-deterministic operations
     // Used to test behavior when there are multiple possible outcomes
     Choice::Select (Vec<i32>) -> i32;     // "Pick one from many options"
@@ -172,14 +172,14 @@ effect! {
 //══════════════════════════════════════════════════════════════════════════════
 
 /// StateHandler: Implements stateful operations (like a mutable variable)
-/// 
+///
 /// This handler maintains an internal integer state that can be read and modified.
 /// It demonstrates how effects can have persistent state across operations.
-/// 
+///
 /// Key insight: The handler's state persists between effect operations, which is
 /// why the order of State::Set operations matters (non-commutativity).
 struct StateHandler {
-    state: i32,  // The current value of our "variable"
+    state: i32, // The current value of our "variable"
 }
 
 impl StateHandler {
@@ -195,24 +195,24 @@ impl Handler<Op> for StateHandler {
         match op {
             // Get: Return the current state value
             Op::State(State::Get) => Box::new(self.state),
-            
+
             // Set: Update the state to a new value, return unit
             Op::State(State::Set(value)) => {
                 self.state = *value;
                 Box::new(())
             }
-            
+
             // This handler only knows about State operations
-            _ => panic!("StateHandler cannot handle operation: {op:?}")
+            _ => panic!("StateHandler cannot handle operation: {op:?}"),
         }
     }
 }
 
 /// PureHandler: Implements mathematical operations with no side effects
-/// 
+///
 /// This handler performs pure mathematical operations. Unlike StateHandler,
 /// it has no internal state - each operation is independent and deterministic.
-/// 
+///
 /// Key insight: Pure operations are "referentially transparent" - calling
 /// Pure::Add((2, 3)) always returns 5, no matter when or how many times you call it.
 struct PureHandler;
@@ -223,28 +223,28 @@ impl Handler<Op> for PureHandler {
         match op {
             // Identity: Return the input unchanged (like f(x) = x)
             Op::Pure(Pure::Identity(x)) => Box::new(*x),
-            
+
             // Add: Return the sum of two numbers
             Op::Pure(Pure::Add((a, b))) => Box::new(a + b),
-            
+
             // Multiply: Return the product of two numbers
             Op::Pure(Pure::Multiply((a, b))) => Box::new(a * b),
-            
+
             // This handler only knows about Pure operations
-            _ => panic!("PureHandler cannot handle operation: {op:?}")
+            _ => panic!("PureHandler cannot handle operation: {op:?}"),
         }
     }
 }
 
 /// ExceptionHandler: Implements error handling operations
-/// 
+///
 /// This handler tracks thrown exceptions and can simulate catching them.
 /// It demonstrates how effects can model error conditions and recovery.
-/// 
+///
 /// Key insight: Exceptions break normal control flow - they can cause computations
 /// to short-circuit or take alternative paths.
 struct ExceptionHandler {
-    thrown_exceptions: Vec<String>,  // Track what errors have been thrown
+    thrown_exceptions: Vec<String>, // Track what errors have been thrown
 }
 
 impl ExceptionHandler {
@@ -265,7 +265,7 @@ impl Handler<Op> for ExceptionHandler {
                 self.thrown_exceptions.push(msg.clone());
                 Box::new(())
             }
-            
+
             // Catch: Check if an exception was thrown, return Result accordingly
             Op::Exception(Exception::Catch(msg)) => {
                 if self.thrown_exceptions.contains(msg) {
@@ -276,23 +276,23 @@ impl Handler<Op> for ExceptionHandler {
                     Box::new(Ok::<String, String>(msg.clone()))
                 }
             }
-            
+
             // This handler only knows about Exception operations
-            _ => panic!("ExceptionHandler cannot handle operation: {op:?}")
+            _ => panic!("ExceptionHandler cannot handle operation: {op:?}"),
         }
     }
 }
 
 /// ChoiceHandler: Implements non-deterministic selection operations
-/// 
+///
 /// This handler can make choices from multiple options. In a real system,
 /// this might represent things like random selection, user input, or exploring
 /// multiple execution paths.
-/// 
+///
 /// Key insight: Choice effects model situations where there are multiple valid
 /// outcomes, and the handler decides which one to pick.
 struct ChoiceHandler {
-    choices: HashMap<Vec<i32>, i32>,  // Predetermined choices for testing
+    choices: HashMap<Vec<i32>, i32>, // Predetermined choices for testing
 }
 
 impl ChoiceHandler {
@@ -302,7 +302,7 @@ impl ChoiceHandler {
             choices: HashMap::new(),
         }
     }
-    
+
     /// Add a predetermined choice for specific options (used for testing)
     #[allow(dead_code)]
     fn with_choice(mut self, options: Vec<i32>, choice: i32) -> Self {
@@ -321,29 +321,29 @@ impl Handler<Op> for ChoiceHandler {
                 let choice = self.choices.get(options).copied().unwrap_or(options[0]);
                 Box::new(choice)
             }
-            
+
             // Empty: Return None (representing "no choice available")
             Op::Choice(Choice::Empty) => Box::new(None::<i32>),
-            
+
             // This handler only knows about Choice operations
-            _ => panic!("ChoiceHandler cannot handle operation: {op:?}")
+            _ => panic!("ChoiceHandler cannot handle operation: {op:?}"),
         }
     }
 }
 
 /// CombinedHandler: Handles multiple effect families in one handler
-/// 
+///
 /// This demonstrates how you can compose multiple handlers to handle different
 /// effect families within a single computation. This is common in real applications
 /// where you might need state, I/O, error handling, etc. all together.
-/// 
+///
 /// Key insight: Handlers can be composed to support multiple effect families,
 /// enabling complex applications with mixed effect types.
 struct CombinedHandler {
-    state: StateHandler,        // Handles State:: operations
-    pure: PureHandler,          // Handles Pure:: operations  
-    exception: ExceptionHandler,// Handles Exception:: operations
-    choice: ChoiceHandler,      // Handles Choice:: operations
+    state: StateHandler,         // Handles State:: operations
+    pure: PureHandler,           // Handles Pure:: operations
+    exception: ExceptionHandler, // Handles Exception:: operations
+    choice: ChoiceHandler,       // Handles Choice:: operations
 }
 
 impl CombinedHandler {
@@ -364,13 +364,13 @@ impl Handler<Op> for CombinedHandler {
         match op {
             // Route State operations to StateHandler
             Op::State(_) => self.state.handle(op),
-            
+
             // Route Pure operations to PureHandler
             Op::Pure(_) => self.pure.handle(op),
-            
+
             // Route Exception operations to ExceptionHandler
             Op::Exception(_) => self.exception.handle(op),
-            
+
             // Route Choice operations to ChoiceHandler
             Op::Choice(_) => self.choice.handle(op),
         }
@@ -382,11 +382,11 @@ impl Handler<Op> for CombinedHandler {
 //══════════════════════════════════════════════════════════════════════════════
 
 /// A "pure" computation that doesn't perform any effects - just returns its input.
-/// This represents the "do nothing" or "identity" operation that's important for 
+/// This represents the "do nothing" or "identity" operation that's important for
 /// testing identity laws.
 #[effectful]
 fn pure_computation(value: i32) -> i32 {
-    value  // No effects performed - this is pure computation
+    value // No effects performed - this is pure computation
 }
 
 /// Simple wrapper around State::Get for readability in tests
@@ -405,9 +405,9 @@ fn set_state(value: i32) -> () {
 /// This demonstrates how multiple effects can be combined into higher-level operations.
 #[effectful]
 fn increment_state() -> i32 {
-    let current: i32 = perform!(State::Get);      // Read current value
+    let current: i32 = perform!(State::Get); // Read current value
     let _: () = perform!(State::Set(current + 1)); // Write incremented value
-    let new_value: i32 = perform!(State::Get);     // Read new value to return
+    let new_value: i32 = perform!(State::Get); // Read new value to return
     new_value
 }
 
@@ -415,11 +415,11 @@ fn increment_state() -> i32 {
 /// This helps test associativity - how grouping of operations affects results.
 #[effectful]
 fn sequence_a_then_b(a: i32, b: i32) -> (i32, i32) {
-    let _: () = perform!(State::Set(a));    // Set to first value
-    let first: i32 = perform!(State::Get);  // Read first value
-    let _: () = perform!(State::Set(b));    // Set to second value
+    let _: () = perform!(State::Set(a)); // Set to first value
+    let first: i32 = perform!(State::Get); // Read first value
+    let _: () = perform!(State::Set(b)); // Set to second value
     let second: i32 = perform!(State::Get); // Read second value
-    (first, second)  // Return both values
+    (first, second) // Return both values
 }
 
 /// Simple wrapper around Pure::Add for readability
@@ -438,8 +438,8 @@ fn multiply_pure(a: i32, b: i32) -> i32 {
 /// This demonstrates composition of pure effects: (x + y) * z
 #[effectful]
 fn composed_pure(x: i32, y: i32, z: i32) -> i32 {
-    let sum: i32 = perform!(Pure::Add((x, y)));      // Step 1: x + y
-    perform!(Pure::Multiply((sum, z)))               // Step 2: (x + y) * z
+    let sum: i32 = perform!(Pure::Add((x, y))); // Step 1: x + y
+    perform!(Pure::Multiply((sum, z))) // Step 2: (x + y) * z
 }
 
 //══════════════════════════════════════════════════════════════════════════════
@@ -447,39 +447,39 @@ fn composed_pure(x: i32, y: i32, z: i32) -> i32 {
 //══════════════════════════════════════════════════════════════════════════════
 
 /// LAW 1: ASSOCIATIVITY OF SEQUENTIAL COMPOSITION
-/// 
+///
 /// **Mathematical Statement**: `(a >> b) >> c ≡ a >> (b >> c)`
-/// 
+///
 /// **What This Means**: When you have three operations that run one after another,
 /// it doesn't matter how you group them with parentheses - the result is the same.
-/// 
-/// **Real-World Analogy**: 
+///
+/// **Real-World Analogy**:
 /// - Making a sandwich: (get bread, add ham), add cheese = get bread, (add ham, add cheese)
 /// - The final sandwich is the same regardless of how you group the steps
-/// 
+///
 /// **Why This Matters**:
 /// - You can refactor code by regrouping operations without changing behavior
 /// - Compilers/optimizers can rearrange operations safely
 /// - Complex computations can be broken down or combined flexibly
-/// 
+///
 /// **Example**:
-/// - Left grouping: ((set to 1, multiply by 2), add 10) 
+/// - Left grouping: ((set to 1, multiply by 2), add 10)
 /// - Right grouping: (set to 1, (multiply by 2, add 10))
 /// - Both should give the same final result: 12
-/// 
+///
 /// **Important**: This law applies to SEQUENTIAL composition (one after another),
 /// not to operations that might interfere with each other.
 #[test]
 fn test_associativity_of_sequential_composition() {
     // Define three simple state operations that we'll compose in different ways
-    
+
     /// Operation A: Set state to 1
     /// This is our starting operation - sets up initial state
     #[effectful]
     fn op_a() -> () {
         let _: () = perform!(State::Set(1));
     }
-    
+
     /// Operation B: Multiply current state by 2
     /// This operation depends on the current state (demonstrates dependency)
     #[effectful]
@@ -487,7 +487,7 @@ fn test_associativity_of_sequential_composition() {
         let current: i32 = perform!(State::Get);
         let _: () = perform!(State::Set(current * 2));
     }
-    
+
     /// Operation C: Add 10 to current state
     /// This operation also depends on current state
     #[effectful]
@@ -495,58 +495,58 @@ fn test_associativity_of_sequential_composition() {
         let current: i32 = perform!(State::Get);
         let _: () = perform!(State::Set(current + 10));
     }
-    
+
     // Now we test that different groupings produce the same result
     // The key insight: the SEQUENCE of operations is what matters, not the grouping
-    
+
     /// Test the sequence: A, then B, then C (no special grouping)
     /// This represents the "canonical" way to run the three operations
     #[effectful]
     fn sequential_ops() -> i32 {
-        let _: () = perform!(State::Set(1));       // op_a: state = 1
-        let current: i32 = perform!(State::Get);   // read current (1)
+        let _: () = perform!(State::Set(1)); // op_a: state = 1
+        let current: i32 = perform!(State::Get); // read current (1)
         let _: () = perform!(State::Set(current * 2)); // op_b: state = 1 * 2 = 2
-        let current: i32 = perform!(State::Get);   // read current (2) 
+        let current: i32 = perform!(State::Get); // read current (2)
         let _: () = perform!(State::Set(current + 10)); // op_c: state = 2 + 10 = 12
-        perform!(State::Get)                       // return final state (12)
+        perform!(State::Get) // return final state (12)
     }
-    
+
     // Run the sequential operations and check the result
     let result = sequential_ops()
-        .handle(StateHandler::new(0))  // Start with state = 0
+        .handle(StateHandler::new(0)) // Start with state = 0
         .run();
-    
+
     // Mathematical verification: (1 * 2) + 10 = 2 + 10 = 12
     assert_eq!(result, 12);
-    
+
     // Verify the same result with a separate computation
     // This demonstrates that the order of operations is preserved
     let verification_result = {
         #[effectful]
         fn verify_sequence() -> i32 {
-            let _: () = perform!(State::Set(1));        // A: 0 -> 1
-            let current: i32 = perform!(State::Get);    // Read: 1
-            let _: () = perform!(State::Set(current * 2)); // B: 1 -> 2  
-            let current: i32 = perform!(State::Get);    // Read: 2
+            let _: () = perform!(State::Set(1)); // A: 0 -> 1
+            let current: i32 = perform!(State::Get); // Read: 1
+            let _: () = perform!(State::Set(current * 2)); // B: 1 -> 2
+            let current: i32 = perform!(State::Get); // Read: 2
             let _: () = perform!(State::Set(current + 10)); // C: 2 -> 12
-            perform!(State::Get)                        // Final: 12
+            perform!(State::Get) // Final: 12
         }
         verify_sequence().handle(StateHandler::new(0)).run()
     };
-    
+
     // Both computations should give the same result (associativity holds)
     assert_eq!(verification_result, 12);
     assert_eq!(result, verification_result);
-    
+
     // EXPLANATION: Why this demonstrates associativity
     // ================================================
-    // 
+    //
     // Even though we can't easily test "grouping" with our current effect system
     // (each effect needs its own handler), the key insight is that the SEQUENCE
     // of state changes is deterministic and associative:
     //
     // - Starting state: 0
-    // - After A: 1  
+    // - After A: 1
     // - After B: 1 * 2 = 2
     // - After C: 2 + 10 = 12
     //
@@ -556,37 +556,37 @@ fn test_associativity_of_sequential_composition() {
 }
 
 /// LAW 2: LEFT IDENTITY FOR RETURN/PURE
-/// 
+///
 /// **Mathematical Statement**: `return(x) >>= f ≡ f(x)`
-/// 
+///
 /// **What This Means**: If you take a pure value, wrap it in the effect system,
 /// then immediately apply a function to it, that's the same as just calling the
 /// function directly on the original value.
-/// 
-/// **Real-World Analogy**: 
+///
+/// **Real-World Analogy**:
 /// - Putting a letter in an envelope just to immediately open it and read it
 /// - is the same as just reading the letter directly
 /// - The "envelope" (effect wrapper) doesn't change the contents
-/// 
+///
 /// **Why This Matters**:
 /// - Pure values can be lifted into the effect system without overhead
 /// - You can freely convert between pure values and wrapped values  
 /// - The effect system doesn't add artificial complexity to simple operations
 /// - Identity operations don't interfere with other computations
-/// 
+///
 /// **Example**:
 /// - `return(5) >>= increment` should equal `increment(5)`
 /// - The pure value 5, when processed by increment, gives the same result
 ///   whether it's wrapped in effects or not
-/// 
-/// **In Code**: 
+///
+/// **In Code**:
 /// ```rust
 /// // These two should be equivalent:
-/// let wrapped = pure_value(5); 
+/// let wrapped = pure_value(5);
 /// let result1 = wrapped.bind(|x| some_function(x));
-/// 
+///
 /// let result2 = some_function(5);
-/// 
+///
 /// assert_eq!(result1, result2); // Left identity holds
 /// ```
 #[test]
@@ -598,16 +598,16 @@ fn test_left_identity() {
     fn return_value(x: i32) -> i32 {
         x // Pure computation - no effects performed, just return the value
     }
-    
+
     // STEP 2: Define function 'f' that we'll apply to the value
     /// Function f: takes a value and creates an effectful computation
     /// This represents a "real" effectful function that does actual work
-    #[effectful] 
+    #[effectful]
     fn f(x: i32) -> i32 {
-        let _: () = perform!(State::Set(x));  // Set state to the input value
-        perform!(State::Get)                  // Return the state (which equals x)
+        let _: () = perform!(State::Set(x)); // Set state to the input value
+        perform!(State::Get) // Return the state (which equals x)
     }
-    
+
     // STEP 3: Test the left side of the equation: return(5) >>= f
     /// Left side: return(5) >>= f
     /// - First get the pure value 5 wrapped in effects
@@ -619,23 +619,19 @@ fn test_left_identity() {
         // Apply f to that value
         f(x).handle(StateHandler::new(0)).run()
     }
-    
+
     // STEP 4: Test the right side of the equation: f(5)
     // Right side: f(5) directly
     // - Skip the return wrapper and just call f(5) directly
-    let right_side = f(5)
-        .handle(StateHandler::new(0))
-        .run();
-    
+    let right_side = f(5).handle(StateHandler::new(0)).run();
+
     // STEP 5: Compare both sides
-    let left_result = left_side()
-        .handle(StateHandler::new(0))
-        .run();
-    
+    let left_result = left_side().handle(StateHandler::new(0)).run();
+
     // LEFT IDENTITY LAW: Both sides should be equal
     assert_eq!(left_result, right_side);
-    assert_eq!(left_result, 5);  // Both should equal 5
-    
+    assert_eq!(left_result, 5); // Both should equal 5
+
     // EXPLANATION: Why this demonstrates left identity
     // ===============================================
     //
@@ -643,9 +639,9 @@ fn test_left_identity() {
     // a function is the same as just applying the function directly.
     //
     // Left side breakdown:
-    // 1. return_value(5) -> 5 (pure computation)  
+    // 1. return_value(5) -> 5 (pure computation)
     // 2. f(5) -> set state to 5, then get state -> 5
-    // 
+    //
     // Right side breakdown:
     // 1. f(5) -> set state to 5, then get state -> 5
     //
@@ -654,38 +650,38 @@ fn test_left_identity() {
 }
 
 /// LAW 3: RIGHT IDENTITY FOR RETURN/PURE
-/// 
+///
 /// **Mathematical Statement**: `m >>= return ≡ m`
-/// 
+///
 /// **What This Means**: If you have an effectful computation and then apply
 /// the "return" function to its result, you get back the same computation.
 /// Adding a "do nothing" step at the end doesn't change the computation.
-/// 
-/// **Real-World Analogy**: 
-/// - Baking a cake and then "presenting it as-is" 
+///
+/// **Real-World Analogy**:
+/// - Baking a cake and then "presenting it as-is"
 /// - is the same as just baking the cake
 /// - The "presenting as-is" step doesn't change anything
-/// 
+///
 /// **Why This Matters**:
 /// - You can add or remove pure "packaging" steps without changing behavior
 /// - Pipelines can be simplified by removing redundant identity operations
 /// - The effect system doesn't force you to unwrap and re-wrap values unnecessarily
 /// - Refactoring tools can safely remove identity operations
-/// 
+///
 /// **Example**:
 /// - `get_user_from_db() >>= return` should equal `get_user_from_db()`
 /// - The database operation followed by "return as-is" is just the database operation
-/// 
-/// **In Code**: 
+///
+/// **In Code**:
 /// ```rust
 /// // These two should be equivalent:
 /// let result1 = some_computation().bind(|x| return(x));
 /// let result2 = some_computation();
-/// 
+///
 /// assert_eq!(result1, result2); // Right identity holds
 /// ```
-/// 
-/// **Contrast with Left Identity**: 
+///
+/// **Contrast with Left Identity**:
 /// - Left identity: pure value + function = just the function
 /// - Right identity: computation + pure wrapper = just the computation
 #[test]
@@ -695,31 +691,27 @@ fn test_right_identity() {
         let _: () = perform!(State::Set(42));
         perform!(State::Get)
     }
-    
+
     #[effectful]
     fn return_function(x: i32) -> i32 {
         x // Pure return, no effects
     }
-    
+
     // m >>= return
     #[effectful]
     fn left_side() -> i32 {
         let result = effectful_computation().handle(StateHandler::new(0)).run();
         return_function(result).handle(StateHandler::new(0)).run()
     }
-    
+
     // m directly
-    let right_side = effectful_computation()
-        .handle(StateHandler::new(0))
-        .run();
-    
-    let left_result = left_side()
-        .handle(StateHandler::new(0))
-        .run();
-    
+    let right_side = effectful_computation().handle(StateHandler::new(0)).run();
+
+    let left_result = left_side().handle(StateHandler::new(0)).run();
+
     assert_eq!(left_result, right_side);
     assert_eq!(left_result, 42);
-    
+
     // EXPLANATION: Why this demonstrates right identity
     // ================================================
     //
@@ -731,7 +723,7 @@ fn test_right_identity() {
     // 2. return_function(42) -> just returns 42 (no effects)
     // 3. Final result: 42
     //
-    // Right side breakdown:  
+    // Right side breakdown:
     // 1. effectful_computation() -> sets state to 42, returns 42
     // 2. Final result: 42
     //
@@ -764,7 +756,7 @@ fn test_right_identity() {
 // PRACTICAL EXAMPLES:
 // ==================
 // State::Set(5)         - Set state to 5
-// State::Get            - Read current state  
+// State::Get            - Read current state
 // Pure::Add((2, 3))     - Add 2 + 3 (pure mathematical operation)
 // perform!(State::Get)  - Execute the "get state" effect
 //
@@ -774,7 +766,7 @@ fn test_right_identity() {
 // Read as: "Taking pure value x, wrapping it in effects, then applying function f
 //          is equivalent to just calling f(x) directly"
 //
-// When you see: "(a >> b) >> c ≡ a >> (b >> c)" 
+// When you see: "(a >> b) >> c ≡ a >> (b >> c)"
 // Read as: "Doing a then b then c is the same whether you group it as
 //          ((a then b) then c) or (a then (b then c))"
 
@@ -785,39 +777,39 @@ fn test_right_identity() {
 // The following tests verify more advanced algebraic properties that ensure
 // our effect system behaves correctly in complex scenarios:
 //
-// LAW 4: BIND ASSOCIATIVITY 
+// LAW 4: BIND ASSOCIATIVITY
 //   - Complex sequential operations can be regrouped safely
 //   - Like the associativity of addition: (1+2)+3 = 1+(2+3)
 //
-// LAW 5: HANDLER HOMOMORPHISM 
+// LAW 5: HANDLER HOMOMORPHISM
 //   - Handlers preserve the algebraic structure of computations
 //   - A good handler doesn't "break" the mathematical relationships
 //
-// LAW 6: EFFECT COMMUTATIVITY 
+// LAW 6: EFFECT COMMUTATIVITY
 //   - Some effects can be reordered without changing the result
 //   - Like addition: 2+3 = 3+2 (order doesn't matter)
 //
-// LAW 7: EFFECT NON-COMMUTATIVITY 
+// LAW 7: EFFECT NON-COMMUTATIVITY
 //   - Some effects CANNOT be reordered (order matters!)
 //   - Like subtraction: 5-3 ≠ 3-5 (order is crucial)
 //
-// LAW 8: HANDLER COMPOSITION 
+// LAW 8: HANDLER COMPOSITION
 //   - Multiple handlers can work together predictably
 //   - Combining handlers doesn't introduce surprising behavior
 //
-// LAW 9: DISTRIBUTIVITY 
+// LAW 9: DISTRIBUTIVITY
 //   - Mathematical distributive laws hold for effects
 //   - Like algebra: a*(b+c) = a*b + a*c
 //
-// LAW 10: IDEMPOTENCY 
+// LAW 10: IDEMPOTENCY
 //   - Some operations can be repeated without changing the result
 //   - Like setting a variable: set(x); set(x); same as just set(x)
 //
-// LAW 11: ALGEBRAIC EQUATIONS 
+// LAW 11: ALGEBRAIC EQUATIONS
 //   - Specific equivalences between different ways of writing computations
 //   - Proves that different code patterns are truly equivalent
 //
-// LAW 12: PARAMETRICITY 
+// LAW 12: PARAMETRICITY
 //   - Laws work consistently regardless of the specific data types used
 //   - The laws are truly "algebraic" - they work at the structural level
 //
@@ -830,35 +822,35 @@ fn test_right_identity() {
 // 5. **Testing**: Mock handlers behave like real ones (no test surprises)
 
 /// LAW 4: BIND ASSOCIATIVITY (MONADIC COMPOSITION)
-/// 
+///
 /// **Mathematical Statement**: `(m >>= f) >>= g ≡ m >>= (λx -> f(x) >>= g)`
-/// 
+///
 /// **Notation Breakdown**:
 /// - `m` = an effectful computation that produces a value
 /// - `f` = a function that takes a value and produces an effectful computation  
 /// - `g` = another function that takes a value and produces an effectful computation
 /// - `>>=` = "bind" operator (run left side, feed result to right side function)
 /// - `λx ->` = "lambda x" (anonymous function taking parameter x)
-/// 
+///
 /// **What This Means**: When you have three computations chained together with bind,
 /// you can group them differently without changing the final result.
-/// 
-/// **Real-World Analogy**: 
+///
+/// **Real-World Analogy**:
 /// - Making dinner: (shop for ingredients, then cook), then serve
 /// - vs: shop for ingredients, then (cook, then serve)  
 /// - The final meal is the same regardless of how you mentally group the steps
-/// 
+///
 /// **Why This Matters**:
 /// - You can refactor complex chains of operations safely
 /// - Nested computations can be flattened or restructured
 /// - No need to worry about "bracketing" when building complex workflows
 /// - Enables functional programming patterns like monadic composition
-/// 
+///
 /// **Example**:
-/// - Left grouping: `((set 5, multiply by 2), add 10)` 
+/// - Left grouping: `((set 5, multiply by 2), add 10)`
 /// - Right grouping: `(set 5, (multiply by 2, add 10))`
 /// - Both should give: 5 → 10 → 20 (final result: 20)
-/// 
+///
 /// **In Plain English**: "The order you perform complex operations matters,
 /// but how you group them in your head doesn't affect the outcome."
 #[test]
@@ -868,19 +860,19 @@ fn test_bind_associativity() {
         let _: () = perform!(State::Set(5));
         perform!(State::Get)
     }
-    
+
     #[effectful]
     fn f(x: i32) -> i32 {
         let _: () = perform!(State::Set(x * 2));
         perform!(State::Get)
     }
-    
+
     #[effectful]
     fn g(x: i32) -> i32 {
         let _: () = perform!(State::Set(x + 10));
         perform!(State::Get)
     }
-    
+
     // Left side: (m >>= f) >>= g
     #[effectful]
     fn left_side() -> i32 {
@@ -890,7 +882,7 @@ fn test_bind_associativity() {
         };
         g(temp_result).handle(StateHandler::new(temp_result)).run()
     }
-    
+
     // Right side: m >>= (\x -> f(x) >>= g)
     #[effectful]
     fn right_side() -> i32 {
@@ -898,59 +890,57 @@ fn test_bind_associativity() {
         let f_result = f(m_result).handle(StateHandler::new(m_result)).run();
         g(f_result).handle(StateHandler::new(f_result)).run()
     }
-    
+
     // For simpler testing, let's test the equivalent sequential operation
     #[effectful]
     fn sequential() -> i32 {
-        let _: () = perform!(State::Set(5));      // m
+        let _: () = perform!(State::Set(5)); // m
         let x: i32 = perform!(State::Get);
-        let _: () = perform!(State::Set(x * 2));  // f
+        let _: () = perform!(State::Set(x * 2)); // f
         let y: i32 = perform!(State::Get);
         let _: () = perform!(State::Set(y + 10)); // g
         perform!(State::Get)
     }
-    
-    let result = sequential()
-        .handle(StateHandler::new(0))
-        .run();
-    
+
+    let result = sequential().handle(StateHandler::new(0)).run();
+
     // Should be (5 * 2) + 10 = 20
     assert_eq!(result, 20);
 }
 
 /// LAW 5: HANDLER HOMOMORPHISM - STRUCTURE PRESERVATION
-/// 
-/// **Mathematical Statement**: 
+///
+/// **Mathematical Statement**:
 /// - `handle(return(x)) = return(x)` (handlers preserve pure values)
 /// - `handle(op >>= k) = handle(op) >>= (handle ∘ k)` (handlers preserve composition)
-/// 
+///
 /// **Notation Breakdown**:
 /// - `handle(...)` = applying a handler to a computation
 /// - `return(x)` = pure value wrapped in effect system
 /// - `op >>= k` = effect operation followed by continuation function k
 /// - `∘` = function composition (handle ∘ k means "handle composed with k")
-/// 
+///
 /// **What This Means**: Handlers don't break the mathematical structure of computations.
 /// When you apply a handler, the algebraic relationships between operations are preserved.
-/// 
-/// **Real-World Analogy**: 
+///
+/// **Real-World Analogy**:
 /// - A good translator preserves the meaning and structure of a story
 /// - Translating "Once upon a time" to French still means "Once upon a time"
 /// - The plot structure, character relationships, etc. remain intact
 /// - Similarly, handlers translate effects but preserve their relationships
-/// 
+///
 /// **Why This Matters**:
 /// - Mock handlers behave the same as real handlers (reliable testing)
 /// - You can swap implementations without breaking program logic
 /// - Handlers can be composed and combined safely
 /// - The effect system's mathematical properties are preserved at runtime
-/// 
+///
 /// **Example**:
 /// - Pure computation: `return(42)` handled should still equal `42`
 /// - Composed operations: `add(2,3) then multiply(result,4)` should equal `(2+3)*4 = 20`
 /// - The handler preserves both the individual operations and their composition
-/// 
-/// **In Plain English**: "A good effect handler is like a good translator - 
+///
+/// **In Plain English**: "A good effect handler is like a good translator -
 /// it changes the language but preserves the meaning and structure."
 #[test]
 fn test_handler_homomorphism() {
@@ -959,66 +949,62 @@ fn test_handler_homomorphism() {
     fn pure_value() -> i32 {
         42 // No effects
     }
-    
-    let handled_pure = pure_value()
-        .handle(PureHandler)
-        .run();
-    
+
+    let handled_pure = pure_value().handle(PureHandler).run();
+
     let direct_pure = 42;
-    
+
     assert_eq!(handled_pure, direct_pure);
-    
+
     // Test that handlers preserve composition
     #[effectful]
     fn composed_operation() -> i32 {
-        let x: i32 = perform!(Pure::Add((2, 3)));     // 5
+        let x: i32 = perform!(Pure::Add((2, 3))); // 5
         let y: i32 = perform!(Pure::Multiply((x, 4))); // 20
-        perform!(Pure::Add((y, 10)))                   // 30
+        perform!(Pure::Add((y, 10))) // 30
     }
-    
-    let result = composed_operation()
-        .handle(PureHandler)
-        .run();
-    
+
+    let result = composed_operation().handle(PureHandler).run();
+
     // Should be ((2 + 3) * 4) + 10 = 30
     assert_eq!(result, 30);
-    
+
     // Equivalent direct computation
     let direct = ((2 + 3) * 4) + 10;
     assert_eq!(result, direct);
 }
 
 /// LAW 6: EFFECT COMMUTATIVITY - WHEN ORDER DOESN'T MATTER
-/// 
+///
 /// **Mathematical Statement**: `op1 >> op2 ≡ op2 >> op1` (for commutative effects)
-/// 
+///
 /// **Notation Breakdown**:
 /// - `op1 >> op2` = do operation 1, then operation 2
 /// - `op2 >> op1` = do operation 2, then operation 1  
 /// - `≡` = these two sequences are equivalent (same result)
-/// 
+///
 /// **What This Means**: Some effects can be reordered without changing the result.
 /// If two operations don't interfere with each other, their order doesn't matter.
-/// 
-/// **Real-World Analogy**: 
+///
+/// **Real-World Analogy**:
 /// - Putting on your socks: left sock then right sock = right sock then left sock
 /// - Adding ingredients to a bowl: salt then pepper = pepper then salt
 /// - The final result is the same regardless of order
-/// 
+///
 /// **Why This Matters**:
 /// - Enables parallel execution (operations can run simultaneously)
 /// - Allows optimizations (reorder for better performance)
 /// - Simplifies reasoning (don't need to worry about order for independent operations)
 /// - Supports flexible program structure
-/// 
+///
 /// **Examples of Commutative Effects**:
 /// - Pure mathematical operations: `add(2,3)` then `add(4,5)` = `add(4,5)` then `add(2,3)`
 /// - Independent logging: log("A") then log("B") ≈ log("B") then log("A") (both messages appear)
 /// - Reading from different variables: `get(x)` then `get(y)` = `get(y)` then `get(x)`
-/// 
+///
 /// **Warning**: Not all effects are commutative! See the next test for counter-examples.
-/// 
-/// **In Plain English**: "Some operations are like putting on socks - 
+///
+/// **In Plain English**: "Some operations are like putting on socks -
 /// the order doesn't matter, you end up with the same result."
 #[test]
 fn test_effect_commutativity() {
@@ -1029,51 +1015,51 @@ fn test_effect_commutativity() {
         let y: i32 = perform!(Pure::Add((b, 3)));
         perform!(Pure::Add((x, y)))
     }
-    
+
     #[effectful]
     fn order2(a: i32, b: i32) -> i32 {
         let y: i32 = perform!(Pure::Add((b, 3)));
         let x: i32 = perform!(Pure::Add((a, 5)));
         perform!(Pure::Add((x, y)))
     }
-    
+
     let result1 = order1(10, 20).handle(PureHandler).run();
     let result2 = order2(10, 20).handle(PureHandler).run();
-    
+
     assert_eq!(result1, result2);
     assert_eq!(result1, (10 + 5) + (20 + 3)); // 38
 }
 
 /// LAW 7: EFFECT NON-COMMUTATIVITY - WHEN ORDER MATTERS!
-/// 
+///
 /// **Mathematical Statement**: `op1 >> op2 ≢ op2 >> op1` (for non-commutative effects)
-/// 
+///
 /// **Notation Breakdown**:
 /// - `op1 >> op2` = do operation 1, then operation 2
 /// - `op2 >> op1` = do operation 2, then operation 1
 /// - `≢` = these are NOT equivalent (different results)
-/// 
+///
 /// **What This Means**: Many effects CANNOT be reordered because they interfere
 /// with each other. The order of operations fundamentally changes the outcome.
-/// 
-/// **Real-World Analogy**: 
+///
+/// **Real-World Analogy**:
 /// - Getting dressed: put on underwear then pants ≠ put on pants then underwear
 /// - Cooking: add flour then water ≠ add water then flour (different consistency)
 /// - Banking: deposit $100 then withdraw $50 ≠ withdraw $50 then deposit $100
-/// 
+///
 /// **Why This Matters**:
 /// - Prevents dangerous optimizations (can't reorder arbitrary operations)
 /// - Enforces correct program semantics (some sequences are logically required)
 /// - Catches bugs (accidentally swapping operations will fail tests)
 /// - Documents dependencies (when operations must happen in specific order)
-/// 
+///
 /// **Examples of Non-Commutative Effects**:
 /// - State mutations: `set(5)` then `set(10)` ≠ `set(10)` then `set(5)` (final state differs)
 /// - File operations: `write("hello")` then `write("world")` ≠ `write("world")` then `write("hello")`
 /// - Database transactions: `insert(record)` then `update(record)` ≠ reverse order
 /// - Network calls: `authenticate()` then `download()` ≠ `download()` then `authenticate()`
-/// 
-/// **In Plain English**: "Some operations are like getting dressed - 
+///
+/// **In Plain English**: "Some operations are like getting dressed -
 /// the order absolutely matters, or you'll end up with a mess!"
 #[test]
 fn test_effect_non_commutativity() {
@@ -1084,17 +1070,17 @@ fn test_effect_non_commutativity() {
         let _: () = perform!(State::Set(20));
         perform!(State::Get)
     }
-    
+
     #[effectful]
     fn order2() -> i32 {
         let _: () = perform!(State::Set(20));
         let _: () = perform!(State::Set(10));
         perform!(State::Get)
     }
-    
+
     let result1 = order1().handle(StateHandler::new(0)).run();
     let result2 = order2().handle(StateHandler::new(0)).run();
-    
+
     // Results should be different - last set wins
     assert_eq!(result1, 20);
     assert_eq!(result2, 10);
@@ -1102,29 +1088,29 @@ fn test_effect_non_commutativity() {
 }
 
 /// LAW 8: HANDLER COMPOSITION - COMBINING MULTIPLE EFFECT FAMILIES
-/// 
+///
 /// **Mathematical Statement**: `handle1(handle2(computation))` behaves predictably
-/// 
+///
 /// **What This Means**: When you have computations that use multiple types of effects,
 /// you can handle them with a composed handler that routes each effect to the right sub-handler.
-/// 
-/// **Real-World Analogy**: 
+///
+/// **Real-World Analogy**:
 /// - A restaurant kitchen with different stations (grill, salad, dessert)
 /// - Each order gets routed to the right station based on what's needed
 /// - The head chef coordinates but doesn't need to know how each station works
 /// - The final dish combines work from multiple specialized areas
-/// 
+///
 /// **Why This Matters**:
 /// - Real applications need multiple effect types (state, I/O, logging, etc.)
 /// - You can build complex handlers from simpler, specialized ones
 /// - Each handler can focus on one concern (separation of responsibilities)
 /// - Handlers can be tested and developed independently
-/// 
+///
 /// **Example**:
 /// A computation that uses both State effects and Pure mathematical effects
 /// can be handled by a CombinedHandler that routes State operations to
 /// StateHandler and Pure operations to PureHandler.
-/// 
+///
 /// **In Plain English**: "A good composed handler is like a restaurant kitchen -
 /// each specialist handles their part, and the result is a complete meal."
 #[test]
@@ -1136,43 +1122,43 @@ fn test_handler_composition() {
         let pure_val: i32 = perform!(Pure::Multiply((state_val, 3)));
         perform!(Pure::Add((pure_val, 7)))
     }
-    
+
     let result = multi_effect_computation()
         .handle(CombinedHandler::new(0))
         .run();
-    
+
     // Should be (5 * 3) + 7 = 22
     assert_eq!(result, 22);
 }
 
 /// LAW 9: DISTRIBUTIVITY - MATHEMATICAL LAWS CARRY OVER TO EFFECTS
-/// 
+///
 /// **Mathematical Statement**: `handle(op1 ⊕ op2) = handle(op1) ⊕ handle(op2)` for distributive operations
-/// 
+///
 /// **Notation Breakdown**:
 /// - `⊕` = some mathematical operation (like addition or multiplication)
 /// - `handle(...)` = applying a handler to a computation
 /// - The law says distributive properties from math still work with effects
-/// 
+///
 /// **What This Means**: Mathematical laws like distributivity (a*(b+c) = a*b + a*c)
 /// still hold when those operations are performed as effects rather than pure math.
-/// 
-/// **Real-World Analogy**: 
+///
+/// **Real-World Analogy**:
 /// - Buying groceries: buying 3*(apples + oranges) = buying 3*apples + 3*oranges
 /// - Whether you calculate in your head or at the store, math works the same way
 /// - The "effect" of shopping doesn't break basic arithmetic relationships
-/// 
+///
 /// **Why This Matters**:
 /// - Mathematical optimizations still work in effectful code
 /// - You can reason about effectful computations using familiar math laws
 /// - Refactoring based on algebraic identities is safe
 /// - Bridge between pure mathematics and effectful programming
-/// 
-/// **Example**: 
+///
+/// **Example**:
 /// - `multiply(2, add(3, 4))` should equal `add(multiply(2, 3), multiply(2, 4))`
 /// - Both equal 2*(3+4) = 2*3 + 2*4 = 14
 /// - The fact that we're using effects doesn't break distributivity
-/// 
+///
 /// **In Plain English**: "Math laws don't stop working just because you're using effects -
 /// 2*(3+4) still equals 2*3 + 2*4, whether it's pure math or effectful operations."
 #[test]
@@ -1182,17 +1168,17 @@ fn test_distributivity() {
         let sum: i32 = perform!(Pure::Add((b, c)));
         perform!(Pure::Multiply((a, sum)))
     }
-    
+
     #[effectful]
     fn distributive_right(a: i32, b: i32, c: i32) -> i32 {
         let prod1: i32 = perform!(Pure::Multiply((a, b)));
         let prod2: i32 = perform!(Pure::Multiply((a, c)));
         perform!(Pure::Add((prod1, prod2)))
     }
-    
+
     let left_result = distributive_left(2, 3, 4).handle(PureHandler).run();
     let right_result = distributive_right(2, 3, 4).handle(PureHandler).run();
-    
+
     // Both should equal 2 * (3 + 4) = 2 * 3 + 2 * 4 = 14
     assert_eq!(left_result, 14);
     assert_eq!(right_result, 14);
@@ -1200,39 +1186,39 @@ fn test_distributivity() {
 }
 
 /// LAW 10: IDEMPOTENCY - SAFE TO REPEAT OPERATIONS
-/// 
+///
 /// **Mathematical Statement**: `op >> op ≡ op` (for idempotent operations)
-/// 
+///
 /// **Notation Breakdown**:
 /// - `op >> op` = doing the same operation twice in a row
 /// - `≡` = equivalent to
 /// - `op` = doing the operation just once
-/// 
+///
 /// **What This Means**: Some operations can be safely repeated without changing
 /// the result. Doing them multiple times has the same effect as doing them once.
-/// 
-/// **Real-World Analogy**: 
+///
+/// **Real-World Analogy**:
 /// - Turning on a light switch: on -> on = on (already on, no change)
 /// - Setting your alarm to 7 AM twice = setting it once (same result)
 /// - Saving a document multiple times = saving it once (same final state)
-/// 
+///
 /// **Why This Matters**:
 /// - Safe to retry operations that might have failed partway through
 /// - Network calls can be safely repeated if connection drops
 /// - Caching systems can replay operations without side effects
 /// - Simplifies error recovery (just repeat the operation)
-/// 
+///
 /// **Examples of Idempotent Operations**:
 /// - `set_value(x)` then `set_value(x)` = just `set_value(x)`
 /// - HTTP PUT requests (setting a resource to a specific state)
 /// - Creating a directory that already exists
 /// - Setting a boolean flag that's already set
-/// 
+///
 /// **Non-Idempotent Counter-Examples**:
 /// - `increment()` then `increment()` ≠ just `increment()` (different results!)
 /// - HTTP POST requests (usually create new resources each time)
 /// - Appending to a file or list
-/// 
+///
 /// **In Plain English**: "Some operations are like flipping a light switch -
 /// doing it twice in a row has the same effect as doing it once."
 #[test]
@@ -1242,58 +1228,54 @@ fn test_idempotency() {
         let _: () = perform!(State::Set(value));
         perform!(State::Get)
     }
-    
+
     #[effectful]
     fn double_idempotent(value: i32) -> i32 {
         let _: () = perform!(State::Set(value));
         let _: () = perform!(State::Set(value)); // Setting same value twice
         perform!(State::Get)
     }
-    
-    let single_result = idempotent_operation(42)
-        .handle(StateHandler::new(0))
-        .run();
-    
-    let double_result = double_idempotent(42)
-        .handle(StateHandler::new(0))
-        .run();
-    
+
+    let single_result = idempotent_operation(42).handle(StateHandler::new(0)).run();
+
+    let double_result = double_idempotent(42).handle(StateHandler::new(0)).run();
+
     assert_eq!(single_result, double_result);
     assert_eq!(single_result, 42);
 }
 
 /// LAW 11: ALGEBRAIC EFFECT EQUATIONS - PROGRAM EQUIVALENCES
-/// 
+///
 /// **Mathematical Statement**: Specific equations between different effectful programs
-/// 
+///
 /// **What This Means**: There are specific patterns in effectful programming where
 /// two different ways of writing a program are mathematically equivalent.
-/// 
-/// **Real-World Analogy**: 
+///
+/// **Real-World Analogy**:
 /// - Different recipes for the same dish: "add salt, then taste" vs "taste, then add salt to preference"
 /// - Different routes to the same destination that arrive at the same time
 /// - Different ways to organize your work that produce the same final output
-/// 
+///
 /// **Why This Matters**:
 /// - Proves that refactoring patterns are actually safe
 /// - Documents which optimizations preserve program meaning
 /// - Helps identify when two code patterns are truly equivalent
 /// - Enables automated program transformations
-/// 
+///
 /// **Example Law**: `get; set(x); get ≡ set(x); return(x)`
-/// 
+///
 /// **Breakdown**:
 /// - Left side: read current value, set to x, read again
 /// - Right side: set to x, then just return x (without reading)  
 /// - Both end up with the same final state and return the same value
 /// - The middle "get" in the left side is redundant
-/// 
-/// **Translation**: 
+///
+/// **Translation**:
 /// - "Read a variable, set it to X, then read it again"
 /// - is the same as  
 /// - "Set it to X and just use X directly"
 /// - The extra read doesn't add any information
-/// 
+///
 /// **In Plain English**: "Some programming patterns are like taking a photo,
 /// editing it, then taking the same photo again - you can skip the redundant steps."
 #[test]
@@ -1305,55 +1287,51 @@ fn test_algebraic_equations() {
         let _: () = perform!(State::Set(x));
         perform!(State::Get)
     }
-    
+
     #[effectful]
     fn right_equation(x: i32) -> i32 {
         let _: () = perform!(State::Set(x));
         x // return(x)
     }
-    
-    let left_result = left_equation(100)
-        .handle(StateHandler::new(50))
-        .run();
-    
-    let right_result = right_equation(100)
-        .handle(StateHandler::new(50))
-        .run();
-    
+
+    let left_result = left_equation(100).handle(StateHandler::new(50)).run();
+
+    let right_result = right_equation(100).handle(StateHandler::new(50)).run();
+
     assert_eq!(left_result, right_result);
     assert_eq!(left_result, 100);
 }
 
 /// LAW 12: PARAMETRICITY - LAWS WORK REGARDLESS OF DATA TYPES
-/// 
+///
 /// **Mathematical Statement**: Algebraic laws work uniformly across different types
-/// 
+///
 /// **What This Means**: The algebraic laws we've tested don't depend on the specific
 /// data types being used. Whether you're working with integers, strings, custom types,
 /// etc., the same algebraic relationships hold.
-/// 
-/// **Real-World Analogy**: 
+///
+/// **Real-World Analogy**:
 /// - Addition is commutative whether you're adding numbers, lengths, or weights
 /// - "Put item in container, then take it out" works the same for any type of item/container
 /// - The underlying patterns are universal, independent of the specific things involved
-/// 
+///
 /// **Why This Matters**:
 /// - Laws proven for one type automatically apply to other types
 /// - You can write generic, reusable effect handlers
 /// - The effect system is truly "algebraic" - structure matters more than content
 /// - Generic programming principles apply to effects
-/// 
-/// **Example**: 
+///
+/// **Example**:
 /// The associativity law `(a >> b) >> c ≡ a >> (b >> c)` works whether:
 /// - a, b, c operate on integers, strings, user records, etc.
 /// - The operations are arithmetic, string manipulation, database calls, etc.
 /// - The return types are numbers, objects, lists, etc.
-/// 
+///
 /// **Test Strategy**:
 /// We test the same algebraic pattern (like increment) with different initial values
 /// to show that the pattern itself is what matters, not the specific numbers.
-/// 
-/// **In Plain English**: "Algebraic laws are like the rules of grammar - 
+///
+/// **In Plain English**: "Algebraic laws are like the rules of grammar -
 /// they work the same way whether you're talking about cats, cars, or concepts."
 #[test]
 fn test_parametricity() {
@@ -1364,7 +1342,7 @@ fn test_parametricity() {
         let _: () = perform!(State::Set(current + 1));
         perform!(State::Get)
     }
-    
+
     // Test with different initial values
     let results: Vec<i32> = vec![0, 10, 100, -5]
         .into_iter()
@@ -1374,16 +1352,16 @@ fn test_parametricity() {
                 .run()
         })
         .collect();
-    
+
     // Each result should be initial + 1
     assert_eq!(results, vec![1, 11, 101, -4]);
-    
+
     // The pattern should be consistent regardless of initial value
     for (i, &result) in results.iter().enumerate() {
         let initial_values = [0, 10, 100, -5];
         assert_eq!(result, initial_values[i] + 1);
     }
-    
+
     // EXPLANATION: Why this demonstrates parametricity
     // ===============================================
     //
@@ -1391,10 +1369,10 @@ fn test_parametricity() {
     // works consistently across different parameter values:
     //
     // Pattern: get current value, add 1, set new value, return new value
-    // 
+    //
     // Applied to different initial states:
     // - Initial 0: 0 -> 1 (add 1)
-    // - Initial 10: 10 -> 11 (add 1) 
+    // - Initial 10: 10 -> 11 (add 1)
     // - Initial 100: 100 -> 101 (add 1)
     // - Initial -5: -5 -> -4 (add 1)
     //
@@ -1421,7 +1399,7 @@ fn test_parametricity() {
 // WHAT THIS MEANS FOR YOU:
 // ========================
 // 🔒 **Reliability**: Your effectful code behaves predictably
-// 🔄 **Refactoring**: You can restructure code safely using algebraic laws  
+// 🔄 **Refactoring**: You can restructure code safely using algebraic laws
 // 🧪 **Testing**: Mock handlers behave exactly like real ones
 // ⚡ **Performance**: Optimizations based on algebraic laws are guaranteed safe
 // 🧩 **Composability**: Effects combine without surprising interactions

@@ -18,7 +18,7 @@ impl Handler<Op> for BadHandler {
                 Box::new("42".to_string())
             }
             Op::Test(Test::GetString) => {
-                // Wrong! Should return String, but returning i32  
+                // Wrong! Should return String, but returning i32
                 Box::new(42i32)
             }
         }
@@ -37,12 +37,10 @@ fn test_string() -> String {
 
 fn main() {
     println!("This example demonstrates improved error messages for type mismatches.\n");
-    
+
     println!("1. Trying to get i32 but handler returns String:");
-    let result = std::panic::catch_unwind(|| {
-        test_number().handle(BadHandler).run()
-    });
-    
+    let result = std::panic::catch_unwind(|| test_number().handle(BadHandler).run());
+
     if let Err(panic_payload) = result {
         if let Some(msg) = panic_payload.downcast_ref::<String>() {
             println!("Error: {}\n", msg);
@@ -50,12 +48,10 @@ fn main() {
             println!("Error: {}\n", msg);
         }
     }
-    
+
     println!("2. Trying to get String but handler returns i32:");
-    let result = std::panic::catch_unwind(|| {
-        test_string().handle(BadHandler).run()
-    });
-    
+    let result = std::panic::catch_unwind(|| test_string().handle(BadHandler).run());
+
     if let Err(panic_payload) = result {
         if let Some(msg) = panic_payload.downcast_ref::<String>() {
             println!("Error: {}\n", msg);
@@ -63,6 +59,8 @@ fn main() {
             println!("Error: {}\n", msg);
         }
     }
-    
-    println!("Notice how the error messages now show actual type names instead of useless TypeIds!");
+
+    println!(
+        "Notice how the error messages now show actual type names instead of useless TypeIds!"
+    );
 }

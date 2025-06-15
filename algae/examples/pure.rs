@@ -39,14 +39,10 @@ fn counter_program() -> i32 {
 
 fn main() {
     println!("=== Pure State Example ===");
-    let result = counter_program()
-        .handle(StateHandler::new(5))
-        .run();
+    let result = counter_program().handle(StateHandler::new(5)).run();
     println!("Result: {result}"); // Should be (5 + 1) * 2 = 12
-    
+
     // Test with different initial state
-    let result2 = counter_program()
-        .handle(StateHandler::new(10))
-        .run();
+    let result2 = counter_program().handle(StateHandler::new(10)).run();
     println!("Result with initial 10: {result2}"); // Should be (10 + 1) * 2 = 22
 }

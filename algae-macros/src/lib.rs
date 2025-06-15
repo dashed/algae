@@ -47,8 +47,9 @@ use std::collections::BTreeMap;
 use syn::{
     parenthesized,
     parse::{Parse, ParseStream},
-    parse_macro_input, punctuated::Punctuated, Ident, Result,
-    Token, Type,
+    parse_macro_input,
+    punctuated::Punctuated,
+    Ident, Result, Token, Type,
 };
 
 /*──────────────────────────────────────────────────────────────────────────────
@@ -146,7 +147,7 @@ impl Parse for EffectInput {
         } else {
             None
         };
-        
+
         let lines = Punctuated::<OpLine, Token![;]>::parse_terminated(input)?;
         Ok(Self { root_ident, lines })
     }
@@ -226,7 +227,7 @@ impl Parse for EffectInput {
 ///     Console::Print (String) -> ();
 ///     Console::ReadLine -> String;
 /// }
-/// 
+///
 /// // Generates:
 /// // enum Console { Print(String), ReadLine }
 /// // enum Op { Console(Console) }
@@ -243,7 +244,7 @@ impl Parse for EffectInput {
 ///     Network::Get (String) -> Result<String, String>;
 ///     Network::Post ((String, String)) -> Result<String, String>;
 /// }
-/// 
+///
 /// // Generates:
 /// // enum File { Read(String), Write((String, String)) }
 /// // enum Network { Get(String), Post((String, String)) }
@@ -289,10 +290,10 @@ impl Parse for EffectInput {
 #[proc_macro]
 pub fn effect(item: TokenStream) -> TokenStream {
     let EffectInput { root_ident, lines } = parse_macro_input!(item as EffectInput);
-    
+
     // Determine the root enum name (default to "Op")
     let root_ident = root_ident.unwrap_or_else(|| Ident::new("Op", proc_macro2::Span::call_site()));
-    
+
     // Generate sentry enum to catch duplicate root names
     let sentry_name = format!("__ALGAE_EFFECT_SENTRY_FOR_{root_ident}");
     let sentry_ident = Ident::new(&sentry_name, proc_macro2::Span::call_site());
@@ -323,7 +324,7 @@ pub fn effect(item: TokenStream) -> TokenStream {
 
     // Get first family info before iterating
     let first_family = families.values().next().cloned();
-    
+
     for (_fam_name_str, (family_ident, variants)) in families {
         // each variant
         let mut variant_tokens = TokenStream2::new();
@@ -366,7 +367,7 @@ pub fn effect(item: TokenStream) -> TokenStream {
             pub enum #family_ident {
                 #variant_tokens
             }
-            
+
             #family_default
         });
 
@@ -381,7 +382,7 @@ pub fn effect(item: TokenStream) -> TokenStream {
     }
 
     // ── 3.  Root enum (configurable name) ────────────────────────────────────
-    
+
     // For Default implementation, we need to pick the first family and first variant
     let default_impl = if let Some((family_ident, variants)) = first_family {
         if let Some(first_variant) = variants.first() {
@@ -409,7 +410,7 @@ pub fn effect(item: TokenStream) -> TokenStream {
     } else {
         quote! {}
     };
-    
+
     let output = quote! {
         // Sentry enum to detect duplicate root names in same module
         #[doc(hidden)]
@@ -424,7 +425,7 @@ pub fn effect(item: TokenStream) -> TokenStream {
         }
 
         #impl_froms
-        
+
         #default_impl
     };
 
@@ -478,7 +479,7 @@ pub fn effect(item: TokenStream) -> TokenStream {
 /// fn add_numbers(a: i32, b: i32) -> i32 {
 ///     perform!(Math::Add((a, b)))
 /// }
-/// 
+///
 /// // This transforms to roughly:
 /// // fn add_numbers(a: i32, b: i32) -> Effectful<i32, Op> {
 /// //     Effectful::new(#[coroutine] |_| {
@@ -491,10 +492,10 @@ pub fn effect(item: TokenStream) -> TokenStream {
 /// ```ignore
 /// # #![feature(coroutines, coroutine_trait, yield_expr)]
 /// # use algae::prelude::*;
-/// # effect! { 
-/// #     State::Get -> i32; 
-/// #     State::Set (i32) -> (); 
-/// #     Logger::Info (String) -> (); 
+/// # effect! {
+/// #     State::Get -> i32;
+/// #     State::Set (i32) -> ();
+/// #     Logger::Info (String) -> ();
 /// # }
 /// #[effectful]
 /// fn complex_computation(initial: i32) -> String {
@@ -566,7 +567,7 @@ pub fn effectful(_: TokenStream, item: TokenStream) -> TokenStream {
         syn::ReturnType::Default => syn::parse_quote! { () },
         syn::ReturnType::Type(_, ty) => ty.as_ref().clone(),
     };
-    
+
     f.sig.output = syn::parse_quote! {
         -> algae::Effectful<#inner_type, Op>
     };
@@ -622,9 +623,9 @@ pub fn effectful(_: TokenStream, item: TokenStream) -> TokenStream {
 /// ```ignore
 /// # #![feature(coroutines, coroutine_trait, yield_expr)]
 /// # use algae::prelude::*;
-/// # effect! { 
-/// #     State::Get -> i32; 
-/// #     State::Set (i32) -> (); 
+/// # effect! {
+/// #     State::Get -> i32;
+/// #     State::Set (i32) -> ();
 /// # }
 /// #[effectful]
 /// fn state_example() -> i32 {
@@ -644,9 +645,9 @@ pub fn effectful(_: TokenStream, item: TokenStream) -> TokenStream {
 /// ```ignore
 /// # #![feature(coroutines, coroutine_trait, yield_expr)]
 /// # use algae::prelude::*;
-/// # effect! { 
-/// #     File::Read (String) -> Result<String, String>; 
-/// #     Logger::Error (String) -> (); 
+/// # effect! {
+/// #     File::Read (String) -> Result<String, String>;
+/// #     Logger::Error (String) -> ();
 /// # }
 /// #[effectful]
 /// fn file_example(filename: String) -> String {
@@ -681,10 +682,10 @@ pub fn effectful(_: TokenStream, item: TokenStream) -> TokenStream {
 /// ```ignore
 /// # #![feature(coroutines, coroutine_trait, yield_expr)]
 /// # use algae::prelude::*;
-/// # effect! { 
-/// #     Counter::Get -> i32; 
-/// #     Counter::Increment -> (); 
-/// #     Logger::Info (String) -> (); 
+/// # effect! {
+/// #     Counter::Get -> i32;
+/// #     Counter::Increment -> ();
+/// #     Logger::Info (String) -> ();
 /// # }
 /// #[effectful]
 /// fn counter_example() -> i32 {
@@ -756,7 +757,7 @@ mod tests {
             Test::GetValue -> i32;
             Test::SetValue (i32) -> ();
         };
-        
+
         assert!(input.root_ident.is_none());
         assert_eq!(input.lines.len(), 2);
     }
@@ -769,7 +770,7 @@ mod tests {
             Test::GetValue -> i32;
             Test::SetValue (i32) -> ();
         };
-        
+
         assert!(input.root_ident.is_some());
         assert_eq!(input.root_ident.unwrap().to_string(), "CustomOp");
         assert_eq!(input.lines.len(), 2);
@@ -782,7 +783,7 @@ mod tests {
             root MyEffectOp;
             Console::Print (String) -> ();
         };
-        
+
         assert!(input.root_ident.is_some());
         assert_eq!(input.root_ident.unwrap().to_string(), "MyEffectOp");
         assert_eq!(input.lines.len(), 1);
@@ -795,10 +796,10 @@ mod tests {
             Router::Navigate (String) -> ();
             Router::Back -> ();
         };
-        
+
         assert!(input.root_ident.is_none());
         assert_eq!(input.lines.len(), 2);
-        
+
         // Verify first line is parsed as Router::Navigate
         let first_line = &input.lines[0];
         assert_eq!(first_line.family.to_string(), "Router");
@@ -809,7 +810,7 @@ mod tests {
     fn test_effect_input_parsing_empty() {
         // Test parsing empty effect! (should work)
         let input: EffectInput = parse_quote! {};
-        
+
         assert!(input.root_ident.is_none());
         assert_eq!(input.lines.len(), 0);
     }
@@ -820,7 +821,7 @@ mod tests {
         let input: EffectInput = parse_quote! {
             root OnlyRootOp;
         };
-        
+
         assert!(input.root_ident.is_some());
         assert_eq!(input.root_ident.unwrap().to_string(), "OnlyRootOp");
         assert_eq!(input.lines.len(), 0);
@@ -834,19 +835,19 @@ mod tests {
             Db::Query (String) -> Result<Vec<Row>, DbError>;
             Db::Execute (String) -> Result<u64, DbError>;
         };
-        
+
         assert!(input.root_ident.is_some());
         assert_eq!(input.root_ident.unwrap().to_string(), "DatabaseOp");
         assert_eq!(input.lines.len(), 2);
     }
 
-    #[test] 
+    #[test]
     fn test_op_line_parsing() {
         // Test individual OpLine parsing
         let op_line: OpLine = parse_quote! {
             Family::Variant (String) -> Result<i32, String>
         };
-        
+
         assert_eq!(op_line.family.to_string(), "Family");
         assert_eq!(op_line.variant.to_string(), "Variant");
         assert!(op_line.payload.is_some());
@@ -858,7 +859,7 @@ mod tests {
         let op_line: OpLine = parse_quote! {
             Family::Variant -> i32
         };
-        
+
         assert_eq!(op_line.family.to_string(), "Family");
         assert_eq!(op_line.variant.to_string(), "Variant");
         assert!(op_line.payload.is_none());
@@ -870,7 +871,7 @@ mod tests {
         let op_line: OpLine = parse_quote! {
             Family::Variant () -> i32
         };
-        
+
         assert_eq!(op_line.family.to_string(), "Family");
         assert_eq!(op_line.variant.to_string(), "Variant");
         assert!(op_line.payload.is_none()); // Empty () becomes None
@@ -883,10 +884,10 @@ mod tests {
             roots::Grow (String) -> ();
             rooter::Execute -> i32;
         };
-        
+
         assert!(input.root_ident.is_none());
         assert_eq!(input.lines.len(), 2);
-        
+
         // Verify first line is parsed as roots::Grow (not confused with "root" keyword)
         let first_line = &input.lines[0];
         assert_eq!(first_line.family.to_string(), "roots");
@@ -900,10 +901,10 @@ mod tests {
             ROOT::GetValue -> i32;
             Root::SetValue (i32) -> ();
         };
-        
+
         assert!(input.root_ident.is_none());
         assert_eq!(input.lines.len(), 2);
-        
+
         // These should be parsed as regular effect lines, not root headers
         let first_line = &input.lines[0];
         assert_eq!(first_line.family.to_string(), "ROOT");

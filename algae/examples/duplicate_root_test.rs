@@ -1,8 +1,8 @@
 //! Test that demonstrates the sentry mechanism for detecting duplicate root names.
-//! 
+//!
 //! This file intentionally contains conflicting effect! declarations to show
 //! how the sentry enum mechanism provides clear error messages.
-//! 
+//!
 //! IMPORTANT: This file will NOT compile! It's designed to show the error.
 //! To see the error, run: cargo check --example duplicate_root_test
 

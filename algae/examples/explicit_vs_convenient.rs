@@ -1,5 +1,5 @@
 //! Example demonstrating both explicit and convenient syntax for effectful functions
-//! 
+//!
 //! This example shows that `#[effectful]` and `perform!` are pure convenience macros
 //! that generate exactly the same code as the explicit approach.
 
@@ -20,65 +20,73 @@ effect! {
 
 /// Explicit function that returns Effectful<R, Op> - no macros involved
 fn calculate_explicit(x: i32, y: i32) -> Effectful<String, Op> {
-    Effectful::new(#[coroutine] move |mut _reply: Option<Reply>| {
-        // Print start message
-        {
-            let effect = Effect::new(Console::Print(format!("Calculating {} * ({} + 5)", x, y)).into());
-            let reply_opt = yield effect;
-            let _: () = reply_opt.unwrap().take::<()>();
-        }
-        
-        // Add 5 to y
-        let y_plus_5: i32 = {
-            let effect = Effect::new(Math::Add((y, 5)).into());
-            let reply_opt = yield effect;
-            reply_opt.unwrap().take::<i32>()
-        };
-        
-        // Multiply x by the result
-        let result: i32 = {
-            let effect = Effect::new(Math::Multiply((x, y_plus_5)).into());
-            let reply_opt = yield effect;
-            reply_opt.unwrap().take::<i32>()
-        };
-        
-        // Print result
-        {
-            let effect = Effect::new(Console::Print(format!("Result: {}", result)).into());
-            let reply_opt = yield effect;
-            let _: () = reply_opt.unwrap().take::<()>();
-        }
-        
-        format!("Final answer: {}", result)
-    })
+    Effectful::new(
+        #[coroutine]
+        move |mut _reply: Option<Reply>| {
+            // Print start message
+            {
+                let effect =
+                    Effect::new(Console::Print(format!("Calculating {} * ({} + 5)", x, y)).into());
+                let reply_opt = yield effect;
+                let _: () = reply_opt.unwrap().take::<()>();
+            }
+
+            // Add 5 to y
+            let y_plus_5: i32 = {
+                let effect = Effect::new(Math::Add((y, 5)).into());
+                let reply_opt = yield effect;
+                reply_opt.unwrap().take::<i32>()
+            };
+
+            // Multiply x by the result
+            let result: i32 = {
+                let effect = Effect::new(Math::Multiply((x, y_plus_5)).into());
+                let reply_opt = yield effect;
+                reply_opt.unwrap().take::<i32>()
+            };
+
+            // Print result
+            {
+                let effect = Effect::new(Console::Print(format!("Result: {}", result)).into());
+                let reply_opt = yield effect;
+                let _: () = reply_opt.unwrap().take::<()>();
+            }
+
+            format!("Final answer: {}", result)
+        },
+    )
 }
 
 /// Another explicit function for user interaction
 fn greet_user_explicit() -> Effectful<String, Op> {
-    Effectful::new(#[coroutine] move |mut _reply: Option<Reply>| {
-        // Print prompt
-        {
-            let effect = Effect::new(Console::Print("What's your name?".to_string()).into());
-            let reply_opt = yield effect;
-            let _: () = reply_opt.unwrap().take::<()>();
-        }
-        
-        // Read input
-        let name: String = {
-            let effect = Effect::new(Console::ReadLine.into());
-            let reply_opt = yield effect;
-            reply_opt.unwrap().take::<String>()
-        };
-        
-        // Print greeting
-        {
-            let effect = Effect::new(Console::Print(format!("Nice to meet you, {}!", name)).into());
-            let reply_opt = yield effect;
-            let _: () = reply_opt.unwrap().take::<()>();
-        }
-        
-        format!("User: {}", name)
-    })
+    Effectful::new(
+        #[coroutine]
+        move |mut _reply: Option<Reply>| {
+            // Print prompt
+            {
+                let effect = Effect::new(Console::Print("What's your name?".to_string()).into());
+                let reply_opt = yield effect;
+                let _: () = reply_opt.unwrap().take::<()>();
+            }
+
+            // Read input
+            let name: String = {
+                let effect = Effect::new(Console::ReadLine.into());
+                let reply_opt = yield effect;
+                reply_opt.unwrap().take::<String>()
+            };
+
+            // Print greeting
+            {
+                let effect =
+                    Effect::new(Console::Print(format!("Nice to meet you, {}!", name)).into());
+                let reply_opt = yield effect;
+                let _: () = reply_opt.unwrap().take::<()>();
+            }
+
+            format!("User: {}", name)
+        },
+    )
 }
 
 // ============================================================================
@@ -120,7 +128,7 @@ impl MockHandler {
             console_outputs: Vec::new(),
         }
     }
-    
+
     fn get_outputs(&self) -> &[String] {
         &self.console_outputs
     }
@@ -158,58 +166,54 @@ impl Handler<Op> for MockHandler {
 
 fn main() {
     println!("=== Demonstrating Explicit vs Convenient Syntax ===\n");
-    
+
     // Both approaches produce identical results
     println!("1. Math calculation example:");
-    
-    let result_explicit = calculate_explicit(3, 7)
-        .handle(MockHandler::new(""))
-        .run();
+
+    let result_explicit = calculate_explicit(3, 7).handle(MockHandler::new("")).run();
     println!("Explicit result: {}\n", result_explicit);
-    
+
     let result_convenient = calculate_convenient(3, 7)
         .handle(MockHandler::new(""))
         .run();
     println!("Convenient result: {}\n", result_convenient);
-    
+
     // Verify they're identical
     assert_eq!(result_explicit, result_convenient);
     println!("✅ Both approaches produce identical results!\n");
-    
+
     // User interaction example
     println!("2. User interaction example:");
-    
+
     let user_explicit = greet_user_explicit()
         .handle(MockHandler::new("Alice"))
         .run();
     println!("Explicit result: {}\n", user_explicit);
-    
+
     let user_convenient = greet_user_convenient()
         .handle(MockHandler::new("Alice"))
         .run();
     println!("Convenient result: {}\n", user_convenient);
-    
+
     // Verify they're identical
     assert_eq!(user_explicit, user_convenient);
     println!("✅ Both approaches produce identical results!\n");
-    
+
     // Show type signatures are the same
     println!("3. Type verification:");
-    
+
     // Both functions have the same type
     let _explicit_fn: fn(i32, i32) -> Effectful<String, Op> = calculate_explicit;
     let convenient_fn = calculate_convenient; // This also has type fn(i32, i32) -> Effectful<String, Op>
-    
+
     // We can use them interchangeably
-    let functions: Vec<fn(i32, i32) -> Effectful<String, Op>> = vec![
-        calculate_explicit,
-        convenient_fn,
-    ];
-    
+    let functions: Vec<fn(i32, i32) -> Effectful<String, Op>> =
+        vec![calculate_explicit, convenient_fn];
+
     println!("✅ Both functions have identical type signatures!");
     println!("✅ Both functions can be stored in the same collection!");
     println!("✅ Both functions produce the same Effectful<String, Op> type!");
-    
+
     println!("\n=== Conclusion ===");
     println!("The #[effectful] macro and perform! are pure convenience:");
     println!("- Same runtime behavior");

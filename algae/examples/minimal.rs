@@ -4,10 +4,13 @@ use std::ops::{Coroutine, CoroutineState};
 use std::pin::Pin;
 
 fn main() {
-    let mut gen = Box::pin(#[coroutine] |_: i32| {
-        let result: i32 = yield "hello";
-        result + 1
-    });
+    let mut gen = Box::pin(
+        #[coroutine]
+        |_: i32| {
+            let result: i32 = yield "hello";
+            result + 1
+        },
+    );
 
     // Start the coroutine with a dummy value
     match Pin::as_mut(&mut gen).resume(0) {

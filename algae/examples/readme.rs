@@ -58,7 +58,10 @@ impl Handler<Op> for MockConsoleHandler {
             }
             Op::Console(Console::ReadLine) => {
                 let mut index = self.index.borrow_mut();
-                let response = self.responses.get(*index).cloned()
+                let response = self
+                    .responses
+                    .get(*index)
+                    .cloned()
                     .unwrap_or_else(|| "default".to_string());
                 *index += 1;
                 Box::new(response)
@@ -71,24 +74,20 @@ impl Handler<Op> for MockConsoleHandler {
 fn main() {
     println!("=== Production Example (Real I/O) ===");
     println!("Type your name when prompted:");
-    
+
     // Production: use real I/O
-    let result = greet_user()
-        .handle(RealConsoleHandler)
-        .run();
-    
+    let result = greet_user().handle(RealConsoleHandler).run();
+
     println!("Result: {}", result);
-    
+
     println!("\n=== Testing Example (Mock I/O) ===");
-    
+
     // Testing: use mock I/O
     let mock_handler = MockConsoleHandler::new(vec!["Alice".to_string()]);
-    let mock_result = greet_user()
-        .handle(mock_handler)
-        .run();
-    
+    let mock_result = greet_user().handle(mock_handler).run();
+
     println!("Mock Result: {}", mock_result);
     assert_eq!(mock_result, "Hello, Alice!");
-    
+
     println!("\nBoth examples completed successfully!");
 }

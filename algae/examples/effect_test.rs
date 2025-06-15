@@ -27,22 +27,20 @@ fn main() {
     let test_op = Op::TestEffect(TestEffect::GetString);
     let _boxed_result = handler.handle(&test_op);
     println!("Direct handler test successful");
-    
+
     // Test Effect creation and take
     let mut effect = Effect::new(test_op);
     effect.fill_boxed(Box::new("direct test".to_string()));
     let reply = effect.get_reply();
     let result: String = reply.take();
     println!("Direct effect test: {result}");
-    
+
     // Now test the full effectful function
     #[effectful]
     fn test_effectful() -> String {
         perform!(TestEffect::GetString)
     }
-    
-    let result = test_effectful()
-        .handle(StringHandler)
-        .run();
+
+    let result = test_effectful().handle(StringHandler).run();
     println!("Effectful test result: {result}");
 }

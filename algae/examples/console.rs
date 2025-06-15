@@ -14,9 +14,9 @@ pub struct RealConsole;
 impl Handler<Op> for RealConsole {
     fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
         match op {
-            Op::Console(Console::Print(msg)) => { 
-                println!("{msg}"); 
-                Box::new(()) 
+            Op::Console(Console::Print(msg)) => {
+                println!("{msg}");
+                Box::new(())
             }
             Op::Console(Console::ReadLine) => {
                 print!("Enter your name: ");
@@ -37,16 +37,19 @@ pub struct MockConsole {
 
 impl MockConsole {
     pub fn new(responses: Vec<String>) -> Self {
-        Self { responses, index: 0 }
+        Self {
+            responses,
+            index: 0,
+        }
     }
 }
 
 impl Handler<Op> for MockConsole {
     fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
         match op {
-            Op::Console(Console::Print(msg)) => { 
-                println!("[MOCK] {msg}"); 
-                Box::new(()) 
+            Op::Console(Console::Print(msg)) => {
+                println!("[MOCK] {msg}");
+                Box::new(())
             }
             Op::Console(Console::ReadLine) => {
                 let response = if self.index < self.responses.len() {
@@ -62,15 +65,15 @@ impl Handler<Op> for MockConsole {
     }
 }
 
-pub struct Rand { 
+pub struct Rand {
     rng: u64, // Simple LCG for demonstration
 }
 
-impl Rand { 
-    pub fn seeded(seed: u64) -> Self { 
-        Self { rng: seed } 
+impl Rand {
+    pub fn seeded(seed: u64) -> Self {
+        Self { rng: seed }
     }
-    
+
     fn next(&mut self) -> u64 {
         self.rng = self.rng.wrapping_mul(1103515245).wrapping_add(12345);
         self.rng
@@ -83,7 +86,7 @@ impl Handler<Op> for Rand {
             Op::Random(Random::Int(range)) => {
                 let val = (self.next() % (range.end - range.start) as u64) as i32 + range.start;
                 Box::new(val)
-            },
+            }
             _ => panic!("Rand cannot handle non-Random operations"),
         }
     }
@@ -152,13 +155,11 @@ impl Handler<Op> for MockCombinedHandler {
     }
 }
 
-fn main() { 
+fn main() {
     println!("=== Interactive Console Demo ===");
-    let answer = program()
-        .handle(CombinedHandler::new())
-        .run();
+    let answer = program().handle(CombinedHandler::new()).run();
     println!("Final result: {answer}");
-    
+
     println!("\n=== Mock Console Demo ===");
     let mock_answer = program()
         .handle(MockCombinedHandler::new(vec!["Alice".to_string()]))

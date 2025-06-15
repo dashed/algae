@@ -1,5 +1,5 @@
 //! Example of using algae without the macros feature
-//! 
+//!
 //! This demonstrates the manual approach to defining effects and effectful
 //! computations without using the `effect!`, `#[effectful]`, and `perform!` macros.
 //!
@@ -66,7 +66,10 @@ impl Handler<Op> for MockConsole {
             }
             Op::Console(Console::ReadLine) => {
                 let mut index = self.index.borrow_mut();
-                let response = self.responses.get(*index).cloned()
+                let response = self
+                    .responses
+                    .get(*index)
+                    .cloned()
                     .unwrap_or_else(|| "default".to_string());
                 *index += 1;
                 Box::new(response)
@@ -77,34 +80,35 @@ impl Handler<Op> for MockConsole {
 
 // Manually create effectful computation (equivalent to what #[effectful] macro generates)
 fn greet_user() -> Effectful<String, Op> {
-    Effectful::new(#[coroutine] |mut _reply: Option<Reply>| {
-        // Print prompt (equivalent to perform!(Console::Print(...)))
-        {
-            let __eff = Effect::new(Console::Print("What's your name?".to_string()).into());
-            let __reply_opt = yield __eff;
-            let _: () = __reply_opt.unwrap().take::<()>();
-        }
-        
-        // Read input (equivalent to perform!(Console::ReadLine))
-        let name: String = {
-            let __eff = Effect::new(Console::ReadLine.into());
-            let __reply_opt = yield __eff;
-            __reply_opt.unwrap().take::<String>()
-        };
-        
-        format!("Hello, {}!", name)
-    })
+    Effectful::new(
+        #[coroutine]
+        |mut _reply: Option<Reply>| {
+            // Print prompt (equivalent to perform!(Console::Print(...)))
+            {
+                let __eff = Effect::new(Console::Print("What's your name?".to_string()).into());
+                let __reply_opt = yield __eff;
+                let _: () = __reply_opt.unwrap().take::<()>();
+            }
+
+            // Read input (equivalent to perform!(Console::ReadLine))
+            let name: String = {
+                let __eff = Effect::new(Console::ReadLine.into());
+                let __reply_opt = yield __eff;
+                __reply_opt.unwrap().take::<String>()
+            };
+
+            format!("Hello, {}!", name)
+        },
+    )
 }
 
 fn main() {
     println!("=== No Macros Example ===");
     println!("This example demonstrates using algae without the macros feature.");
-    
+
     let handler = MockConsole::new(vec!["Alice".to_string()]);
-    let result = greet_user()
-        .handle(handler)
-        .run();
-    
+    let result = greet_user().handle(handler).run();
+
     println!("Result: {}", result);
     println!("\nAs you can see, the core functionality works without macros,");
     println!("but the syntax is much more verbose!");

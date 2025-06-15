@@ -207,10 +207,10 @@ impl<Op> Effect<Op> {
     /// let effect = Effect::new(Test::GetValue);
     /// // Effect is now ready to be handled
     /// ```
-    pub fn new(op: Op) -> Self { 
-        Self { op, reply: None } 
+    pub fn new(op: Op) -> Self {
+        Self { op, reply: None }
     }
-    
+
     /// Stores a pre-boxed reply value in this effect (one-shot only).
     ///
     /// This method is called by handlers to provide the result of processing
@@ -241,11 +241,11 @@ impl<Op> Effect<Op> {
     /// effect.fill_boxed(Box::new(42i32));
     /// // Effect now contains the reply value
     /// ```
-    pub fn fill_boxed(&mut self, r: Box<dyn Any + Send>) { 
+    pub fn fill_boxed(&mut self, r: Box<dyn Any + Send>) {
         assert!(self.reply.is_none(), "reply filled twice");
         self.reply = Some(r);
     }
-    
+
     /// Consumes the effect and extracts the reply value (one-shot consumption).
     ///
     /// This method retrieves the reply that was stored by the handler and
@@ -280,9 +280,7 @@ impl<Op> Effect<Op> {
     /// ```
     pub fn get_reply(self) -> Reply {
         let reply_value = self.reply.expect("Effect has no reply");
-        Reply {
-            value: reply_value
-        }
+        Reply { value: reply_value }
     }
 }
 
@@ -338,7 +336,7 @@ impl Reply {
             Ok(val) => *val,
             Err(boxed_value) => {
                 let expected_name = std::any::type_name::<R>();
-                
+
                 // Try to identify some common types to provide better error messages
                 let any_ref = boxed_value.as_ref() as &dyn Any;
                 let actual_type = if any_ref.is::<i32>() {
@@ -362,7 +360,7 @@ impl Reply {
                 } else {
                     "<unknown type>"
                 };
-                
+
                 panic!("Type mismatch when taking reply: expected '{expected_name}', but got '{actual_type}'. \
                        This usually means the handler returned the wrong type for this effect operation.");
             }
@@ -376,7 +374,8 @@ impl Reply {
 /// - Takes `Option<Reply>` as resume argument (the reply from the previous effect)
 /// - Returns `R` when the computation completes
 /// - Yields `Effect<Op>` when an effect needs to be handled
-type EffectCoroutine<R, Op> = Pin<Box<dyn Coroutine<Option<Reply>, Return = R, Yield = Effect<Op>>>>;
+type EffectCoroutine<R, Op> =
+    Pin<Box<dyn Coroutine<Option<Reply>, Return = R, Yield = Effect<Op>>>>;
 
 /// A wrapper around a coroutine that represents an effectful computation.
 ///
@@ -500,7 +499,7 @@ impl<R, Op: 'static> Effectful<R, Op> {
     pub fn run_with<H: Handler<Op>>(mut self, mut h: H) -> R {
         // Start with None for the first call
         let mut resume_arg: Option<Reply> = None;
-        
+
         loop {
             match self.gen.as_mut().resume(resume_arg) {
                 CoroutineState::Complete(r) => return r,
@@ -589,11 +588,11 @@ impl<R, Op: 'static> Effectful<R, Op> {
 /// let result = handled.run(); // Execute the computation
 /// assert_eq!(result, 42);
 /// ```
-pub struct Handled<R, Op: 'static, H: Handler<Op>> { 
+pub struct Handled<R, Op: 'static, H: Handler<Op>> {
     /// The effectful computation to execute
-    eff: Effectful<R, Op>, 
+    eff: Effectful<R, Op>,
     /// The handler that will process effects
-    h: H 
+    h: H,
 }
 
 impl<R, Op: 'static, H: Handler<Op>> Handled<R, Op, H> {
@@ -628,8 +627,8 @@ impl<R, Op: 'static, H: Handler<Op>> Handled<R, Op, H> {
     ///     .run(); // This calls run()
     /// assert_eq!(result, 42);
     /// ```
-    pub fn run(self) -> R { 
-        self.eff.run_with(self.h) 
+    pub fn run(self) -> R {
+        self.eff.run_with(self.h)
     }
 }
 
@@ -652,7 +651,7 @@ impl<R, Op: 'static, H: Handler<Op>> Handled<R, Op, H> {
 /// ```rust,ignore
 /// # #![feature(coroutines, coroutine_trait, yield_expr)]
 /// # use algae::prelude::*;
-/// # effect! { 
+/// # effect! {
 /// #     File::Read (String) -> String;
 /// #     File::Write ((String, String)) -> ();
 /// # }
@@ -797,7 +796,7 @@ pub trait Handler<Op> {
 /// your effect types and handlers manually using the core types.
 pub mod prelude {
     pub use crate::{Effect, Effectful, Handler, Reply};
-    
+
     #[cfg(feature = "macros")]
     pub use algae_macros::{effect, effectful, perform};
 }
@@ -860,18 +859,18 @@ pub mod prelude {
 macro_rules! combine_roots {
     ( $vis:vis $root:ident = $( $path:ident ),+ $(,)? ) => {
         #[derive(Debug)]
-        $vis enum $root { 
-            $( $path($path) ),+ 
+        $vis enum $root {
+            $( $path($path) ),+
         }
 
         $(
-            impl From<$path> for $root { 
-                fn from(f: $path) -> Self { 
-                    $root::$path(f) 
-                } 
+            impl From<$path> for $root {
+                fn from(f: $path) -> Self {
+                    $root::$path(f)
+                }
             }
         )+
-        
+
         // Note: Default implementation is not automatically generated
         // Users should implement Default manually if needed, as it's unclear
         // which variant should be the default when combining multiple enums
@@ -888,15 +887,15 @@ mod tests {
     effect! {
         Test::GetValue -> i32;
         Test::SetValue (i32) -> ();
-        
+
         Math::Add ((i32, i32)) -> i32;
         Math::Multiply ((i32, i32)) -> i32;
         Math::Divide ((i32, i32)) -> Result<i32, String>;
-        
+
         IO::ReadString -> String;
         IO::WriteString (String) -> ();
         IO::ReadNumber -> i32;
-        
+
         Logger::Info (String) -> ();
         Logger::Error (String) -> ();
         Logger::GetLogCount -> usize;
@@ -921,7 +920,7 @@ mod tests {
                     self.value = *new_val;
                     Box::new(())
                 }
-                _ => panic!("TestHandler cannot handle this operation: {op:?}")
+                _ => panic!("TestHandler cannot handle this operation: {op:?}"),
             }
         }
     }
@@ -941,7 +940,7 @@ mod tests {
                         Box::new(Ok::<i32, String>(a / b))
                     }
                 }
-                _ => panic!("MathHandler cannot handle this operation: {op:?}")
+                _ => panic!("MathHandler cannot handle this operation: {op:?}"),
             }
         }
     }
@@ -965,7 +964,7 @@ mod tests {
                 written_strings: Vec::new(),
             }
         }
-        
+
         #[allow(dead_code)]
         fn written_strings(&self) -> &[String] {
             &self.written_strings
@@ -997,7 +996,7 @@ mod tests {
                     self.number_index += 1;
                     Box::new(response)
                 }
-                _ => panic!("MockIOHandler cannot handle this operation: {op:?}")
+                _ => panic!("MockIOHandler cannot handle this operation: {op:?}"),
             }
         }
     }
@@ -1011,7 +1010,7 @@ mod tests {
         fn new() -> Self {
             Self { logs: Vec::new() }
         }
-        
+
         #[allow(dead_code)]
         fn get_logs(&self) -> &[(String, String)] {
             &self.logs
@@ -1029,10 +1028,8 @@ mod tests {
                     self.logs.push(("ERROR".to_string(), msg.clone()));
                     Box::new(())
                 }
-                Op::Logger(Logger::GetLogCount) => {
-                    Box::new(self.logs.len())
-                }
-                _ => panic!("LoggingHandler cannot handle this operation: {op:?}")
+                Op::Logger(Logger::GetLogCount) => Box::new(self.logs.len()),
+                _ => panic!("LoggingHandler cannot handle this operation: {op:?}"),
             }
         }
     }
@@ -1046,7 +1043,11 @@ mod tests {
     }
 
     impl CombinedTestHandler {
-        fn new(initial_value: i32, string_responses: Vec<String>, number_responses: Vec<i32>) -> Self {
+        fn new(
+            initial_value: i32,
+            string_responses: Vec<String>,
+            number_responses: Vec<i32>,
+        ) -> Self {
             Self {
                 test_handler: TestHandler::new(initial_value),
                 math_handler: MathHandler,
@@ -1054,12 +1055,12 @@ mod tests {
                 logger_handler: LoggingHandler::new(),
             }
         }
-        
+
         #[allow(dead_code)]
         fn get_written_strings(&self) -> &[String] {
             self.io_handler.written_strings()
         }
-        
+
         #[allow(dead_code)]
         fn get_logs(&self) -> &[(String, String)] {
             self.logger_handler.get_logs()
@@ -1116,24 +1117,24 @@ mod tests {
     fn complex_program() -> String {
         // Log start
         let _: () = perform!(Logger::Info("Complex program started".to_string()));
-        
+
         // Get initial state
         let initial: i32 = perform!(Test::GetValue);
-        
+
         // Do some math
         let doubled: i32 = perform!(Math::Multiply((initial, 2)));
         let _: () = perform!(Test::SetValue(doubled));
-        
+
         // Read input
         let _: () = perform!(IO::WriteString("Enter multiplier:".to_string()));
         let multiplier: i32 = perform!(IO::ReadNumber);
-        
+
         // More math
         let result: i32 = perform!(Math::Multiply((doubled, multiplier)));
-        
+
         // Log result
         let _: () = perform!(Logger::Info(format!("Result calculated: {result}")));
-        
+
         format!("Final result: {result}")
     }
 
@@ -1142,16 +1143,18 @@ mod tests {
         fn inner_computation() -> Effectful<i32, Op> {
             inner_effectful()
         }
-        
+
         #[effectful]
         fn inner_effectful() -> i32 {
             let value: i32 = perform!(Test::GetValue);
             perform!(Math::Add((value, 5)))
         }
-        
+
         let base: i32 = perform!(Test::GetValue);
         let _: () = perform!(Test::SetValue(base + 1));
-        let inner_result: i32 = inner_computation().handle(CombinedTestHandler::new(10, vec![], vec![])).run();
+        let inner_result: i32 = inner_computation()
+            .handle(CombinedTestHandler::new(10, vec![], vec![]))
+            .run();
         perform!(Math::Add((base, inner_result)))
     }
 
@@ -1174,50 +1177,39 @@ mod tests {
     // Basic functionality tests
     #[test]
     fn test_basic_effects() {
-        let result = test_computation()
-            .handle(TestHandler::new(5))
-            .run();
-        
+        let result = test_computation().handle(TestHandler::new(5)).run();
+
         assert_eq!(result, 20); // (5 * 2) + 10 = 20
     }
 
     #[test]
     fn test_different_initial_values() {
-        let result = test_computation()
-            .handle(TestHandler::new(3))
-            .run();
-        
+        let result = test_computation().handle(TestHandler::new(3)).run();
+
         assert_eq!(result, 16); // (3 * 2) + 10 = 16
     }
 
     #[test]
     fn test_math_operations() {
-        let result = math_computation()
-            .handle(MathHandler)
-            .run();
-        
+        let result = math_computation().handle(MathHandler).run();
+
         assert_eq!(result, 4); // (5 + 3) * 2 / 4 = 4
     }
 
     #[test]
     fn test_io_operations() {
         let result = io_program()
-            .handle(MockIOHandler::new(
-                vec!["Alice".to_string()],
-                vec![25]
-            ))
+            .handle(MockIOHandler::new(vec!["Alice".to_string()], vec![25]))
             .run();
-        
+
         assert_eq!(result, "Alice is 25 years old");
     }
 
     #[test]
     fn test_logging_operations() {
         let handler = LoggingHandler::new();
-        let result = logging_program()
-            .handle(handler)
-            .run();
-        
+        let result = logging_program().handle(handler).run();
+
         assert_eq!(result, 3);
         // Note: handler is moved into the effectful computation, so we can't inspect its logs afterwards
     }
@@ -1225,21 +1217,17 @@ mod tests {
     #[test]
     fn test_combined_handler() {
         let handler = CombinedTestHandler::new(5, vec!["test".to_string()], vec![3]);
-        let result = complex_program()
-            .handle(handler)
-            .run();
-        
+        let result = complex_program().handle(handler).run();
+
         assert_eq!(result, "Final result: 30"); // 5 * 2 * 3 = 30
-        // Note: handler is moved into the effectful computation
+                                                // Note: handler is moved into the effectful computation
     }
 
     #[test]
     fn test_error_handling() {
         let handler = CombinedTestHandler::new(0, vec![], vec![]);
-        let result = error_handling_program()
-            .handle(handler)
-            .run();
-        
+        let result = error_handling_program().handle(handler).run();
+
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Division by zero");
         // Note: handler is moved into the effectful computation
@@ -1247,16 +1235,10 @@ mod tests {
 
     #[test]
     fn test_multiple_handler_calls() {
-        let result1 = test_computation()
-            .handle(TestHandler::new(1))
-            .run();
-        let result2 = test_computation()
-            .handle(TestHandler::new(2))
-            .run();
-        let result3 = test_computation()
-            .handle(TestHandler::new(3))
-            .run();
-        
+        let result1 = test_computation().handle(TestHandler::new(1)).run();
+        let result2 = test_computation().handle(TestHandler::new(2)).run();
+        let result3 = test_computation().handle(TestHandler::new(3)).run();
+
         assert_eq!(result1, 12); // (1 * 2) + 10 = 12
         assert_eq!(result2, 14); // (2 * 2) + 10 = 14
         assert_eq!(result3, 16); // (3 * 2) + 10 = 16
@@ -1268,11 +1250,9 @@ mod tests {
         fn no_effects() -> i32 {
             42
         }
-        
-        let result = no_effects()
-            .handle(TestHandler::new(0))
-            .run();
-        
+
+        let result = no_effects().handle(TestHandler::new(0)).run();
+
         assert_eq!(result, 42);
     }
 
@@ -1282,11 +1262,9 @@ mod tests {
         fn single_effect() -> i32 {
             perform!(Test::GetValue)
         }
-        
-        let result = single_effect()
-            .handle(TestHandler::new(99))
-            .run();
-        
+
+        let result = single_effect().handle(TestHandler::new(99)).run();
+
         assert_eq!(result, 99);
     }
 
@@ -1302,11 +1280,9 @@ mod tests {
             }
             sum
         }
-        
-        let result = many_effects()
-            .handle(TestHandler::new(0))
-            .run();
-        
+
+        let result = many_effects().handle(TestHandler::new(0)).run();
+
         assert_eq!(result, 55); // 1+2+3+...+10 = 55
     }
 
@@ -1317,32 +1293,30 @@ mod tests {
             let val: i32 = perform!(Test::GetValue);
             format!("Value is {val}")
         }
-        
+
         #[effectful]
         fn return_bool() -> bool {
             let val: i32 = perform!(Test::GetValue);
             val > 5
         }
-        
+
         #[effectful]
         fn return_option() -> Option<i32> {
             let val: i32 = perform!(Test::GetValue);
-            if val > 0 { Some(val) } else { None }
+            if val > 0 {
+                Some(val)
+            } else {
+                None
+            }
         }
-        
-        let string_result = return_string()
-            .handle(TestHandler::new(42))
-            .run();
+
+        let string_result = return_string().handle(TestHandler::new(42)).run();
         assert_eq!(string_result, "Value is 42");
-        
-        let bool_result = return_bool()
-            .handle(TestHandler::new(10))
-            .run();
+
+        let bool_result = return_bool().handle(TestHandler::new(10)).run();
         assert!(bool_result);
-        
-        let option_result = return_option()
-            .handle(TestHandler::new(-1))
-            .run();
+
+        let option_result = return_option().handle(TestHandler::new(-1)).run();
         assert_eq!(option_result, None);
     }
 
@@ -1357,11 +1331,9 @@ mod tests {
             let third: i32 = perform!(Test::GetValue);
             (first, third)
         }
-        
-        let result = increment_twice()
-            .handle(TestHandler::new(10))
-            .run();
-        
+
+        let result = increment_twice().handle(TestHandler::new(10)).run();
+
         assert_eq!(result, (10, 12));
     }
 
@@ -1372,10 +1344,8 @@ mod tests {
         fn unit_return() -> () {
             let _: () = perform!(Test::SetValue(42));
         }
-        
-        unit_return()
-            .handle(TestHandler::new(0))
-            .run();
+
+        unit_return().handle(TestHandler::new(0)).run();
     }
 
     #[test]
@@ -1384,9 +1354,9 @@ mod tests {
             Complex::GetVector -> Vec<i32>;
             Complex::GetMap -> HashMap<String, i32>;
         }
-        
+
         struct ComplexHandler;
-        
+
         impl Handler<Op> for ComplexHandler {
             fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
                 match op {
@@ -1400,18 +1370,16 @@ mod tests {
                 }
             }
         }
-        
+
         #[effectful]
         fn complex_data() -> (Vec<i32>, HashMap<String, i32>) {
             let vec: Vec<i32> = perform!(Complex::GetVector);
             let map: HashMap<String, i32> = perform!(Complex::GetMap);
             (vec, map)
         }
-        
-        let (vec, map) = complex_data()
-            .handle(ComplexHandler)
-            .run();
-        
+
+        let (vec, map) = complex_data().handle(ComplexHandler).run();
+
         assert_eq!(vec, vec![1, 2, 3, 4, 5]);
         assert_eq!(map.get("a"), Some(&1));
         assert_eq!(map.get("b"), Some(&2));
@@ -1473,35 +1441,36 @@ mod tests {
         #[test]
         fn test_custom_root_basic() {
             fn test_computation() -> algae::Effectful<i32, CustomOp> {
-                algae::Effectful::new(#[coroutine] move |mut _reply: Option<algae::Reply>| {
-                    // Get current value
-                    let current: i32 = {
-                        let effect = algae::Effect::new(Custom::GetValue.into());
-                        let reply_opt = yield effect;
-                        reply_opt.unwrap().take::<i32>()
-                    };
+                algae::Effectful::new(
+                    #[coroutine]
+                    move |mut _reply: Option<algae::Reply>| {
+                        // Get current value
+                        let current: i32 = {
+                            let effect = algae::Effect::new(Custom::GetValue.into());
+                            let reply_opt = yield effect;
+                            reply_opt.unwrap().take::<i32>()
+                        };
 
-                    // Set new value
-                    {
-                        let effect = algae::Effect::new(Custom::SetValue(current + 10).into());
-                        let reply_opt = yield effect;
-                        let _: () = reply_opt.unwrap().take::<()>();
-                    }
+                        // Set new value
+                        {
+                            let effect = algae::Effect::new(Custom::SetValue(current + 10).into());
+                            let reply_opt = yield effect;
+                            let _: () = reply_opt.unwrap().take::<()>();
+                        }
 
-                    // Get updated value
-                    let updated: i32 = {
-                        let effect = algae::Effect::new(Custom::GetValue.into());
-                        let reply_opt = yield effect;
-                        reply_opt.unwrap().take::<i32>()
-                    };
+                        // Get updated value
+                        let updated: i32 = {
+                            let effect = algae::Effect::new(Custom::GetValue.into());
+                            let reply_opt = yield effect;
+                            reply_opt.unwrap().take::<i32>()
+                        };
 
-                    updated
-                })
+                        updated
+                    },
+                )
             }
 
-            let result = test_computation()
-                .handle(CustomHandler { value: 5 })
-                .run();
+            let result = test_computation().handle(CustomHandler { value: 5 }).run();
 
             assert_eq!(result, 15);
         }
@@ -1509,34 +1478,41 @@ mod tests {
         #[test]
         fn test_another_custom_root() {
             fn string_computation() -> algae::Effectful<String, AnotherOp> {
-                algae::Effectful::new(#[coroutine] move |mut _reply: Option<algae::Reply>| {
-                    // Get current string
-                    let current: String = {
-                        let effect = algae::Effect::new(Another::GetString.into());
-                        let reply_opt = yield effect;
-                        reply_opt.unwrap().take::<String>()
-                    };
+                algae::Effectful::new(
+                    #[coroutine]
+                    move |mut _reply: Option<algae::Reply>| {
+                        // Get current string
+                        let current: String = {
+                            let effect = algae::Effect::new(Another::GetString.into());
+                            let reply_opt = yield effect;
+                            reply_opt.unwrap().take::<String>()
+                        };
 
-                    // Set new string
-                    {
-                        let effect = algae::Effect::new(Another::SetString(format!("{} world!", current)).into());
-                        let reply_opt = yield effect;
-                        let _: () = reply_opt.unwrap().take::<()>();
-                    }
+                        // Set new string
+                        {
+                            let effect = algae::Effect::new(
+                                Another::SetString(format!("{} world!", current)).into(),
+                            );
+                            let reply_opt = yield effect;
+                            let _: () = reply_opt.unwrap().take::<()>();
+                        }
 
-                    // Get updated string
-                    let updated: String = {
-                        let effect = algae::Effect::new(Another::GetString.into());
-                        let reply_opt = yield effect;
-                        reply_opt.unwrap().take::<String>()
-                    };
+                        // Get updated string
+                        let updated: String = {
+                            let effect = algae::Effect::new(Another::GetString.into());
+                            let reply_opt = yield effect;
+                            reply_opt.unwrap().take::<String>()
+                        };
 
-                    updated
-                })
+                        updated
+                    },
+                )
             }
 
             let result = string_computation()
-                .handle(AnotherHandler { text: "Hello".to_string() })
+                .handle(AnotherHandler {
+                    text: "Hello".to_string(),
+                })
                 .run();
 
             assert_eq!(result, "Hello world!");
@@ -1562,29 +1538,37 @@ mod tests {
         #[test]
         fn test_combine_roots() {
             fn combined_computation() -> algae::Effectful<String, CombinedOp> {
-                algae::Effectful::new(#[coroutine] move |mut _reply: Option<algae::Reply>| {
-                    // Use custom effect
-                    let value: i32 = {
-                        let effect = algae::Effect::new(CombinedOp::CustomOp(Custom::GetValue.into()));
-                        let reply_opt = yield effect;
-                        reply_opt.unwrap().take::<i32>()
-                    };
+                algae::Effectful::new(
+                    #[coroutine]
+                    move |mut _reply: Option<algae::Reply>| {
+                        // Use custom effect
+                        let value: i32 = {
+                            let effect =
+                                algae::Effect::new(CombinedOp::CustomOp(Custom::GetValue.into()));
+                            let reply_opt = yield effect;
+                            reply_opt.unwrap().take::<i32>()
+                        };
 
-                    // Use another effect
-                    let text: String = {
-                        let effect = algae::Effect::new(CombinedOp::AnotherOp(Another::GetString.into()));
-                        let reply_opt = yield effect;
-                        reply_opt.unwrap().take::<String>()
-                    };
+                        // Use another effect
+                        let text: String = {
+                            let effect = algae::Effect::new(CombinedOp::AnotherOp(
+                                Another::GetString.into(),
+                            ));
+                            let reply_opt = yield effect;
+                            reply_opt.unwrap().take::<String>()
+                        };
 
-                    format!("{}: {}", text, value)
-                })
+                        format!("{}: {}", text, value)
+                    },
+                )
             }
 
             let result = combined_computation()
                 .handle(CombinedHandler {
                     custom: CustomHandler { value: 42 },
-                    another: AnotherHandler { text: "Test".to_string() },
+                    another: AnotherHandler {
+                        text: "Test".to_string(),
+                    },
                 })
                 .run();
 
@@ -1600,25 +1584,31 @@ mod tests {
     fn test_one_shot_effect_fill() {
         // Test that filling an effect twice panics (enforcing one-shot guarantee)
         let mut effect = Effect::new(Test::GetValue);
-        
+
         // First fill should succeed
         effect.fill_boxed(Box::new(42i32));
-        
+
         // Second fill should panic
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             effect.fill_boxed(Box::new(24i32));
         }));
-        
+
         assert!(result.is_err(), "Expected panic when filling effect twice");
-        
+
         // The panic message should contain our assertion text
         if let Err(panic_payload) = result {
             if let Some(panic_str) = panic_payload.downcast_ref::<&str>() {
-                assert!(panic_str.contains("reply filled twice"), 
-                    "Panic message should mention 'reply filled twice', got: {}", panic_str);
+                assert!(
+                    panic_str.contains("reply filled twice"),
+                    "Panic message should mention 'reply filled twice', got: {}",
+                    panic_str
+                );
             } else if let Some(panic_string) = panic_payload.downcast_ref::<String>() {
-                assert!(panic_string.contains("reply filled twice"), 
-                    "Panic message should mention 'reply filled twice', got: {}", panic_string);
+                assert!(
+                    panic_string.contains("reply filled twice"),
+                    "Panic message should mention 'reply filled twice', got: {}",
+                    panic_string
+                );
             }
         }
     }
@@ -1627,12 +1617,15 @@ mod tests {
     fn test_one_shot_effect_get_reply_without_fill() {
         // Test that get_reply panics when no reply has been filled
         let effect = Effect::new(Test::GetValue);
-        
+
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _ = effect.get_reply();
         }));
-        
-        assert!(result.is_err(), "Expected panic when calling get_reply on unfilled effect");
+
+        assert!(
+            result.is_err(),
+            "Expected panic when calling get_reply on unfilled effect"
+        );
     }
 
     #[test]
@@ -1640,16 +1633,19 @@ mod tests {
         // Test that Reply::take panics with wrong type (additional safety check)
         let mut effect = Effect::new(Test::GetValue);
         effect.fill_boxed(Box::new(42i32));
-        
+
         let reply = effect.get_reply();
-        
+
         // Try to take with wrong type should panic
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _: String = reply.take();
         }));
-        
-        assert!(result.is_err(), "Expected panic when taking reply with wrong type");
-        
+
+        assert!(
+            result.is_err(),
+            "Expected panic when taking reply with wrong type"
+        );
+
         // Check that the panic message contains helpful type information
         if let Err(panic_payload) = result {
             let panic_message = if let Some(panic_str) = panic_payload.downcast_ref::<&str>() {
@@ -1659,45 +1655,51 @@ mod tests {
             } else {
                 "Unknown panic message".to_string()
             };
-            
+
             // Should mention both expected and actual types
-            assert!(panic_message.contains("expected 'alloc::string::String'") || 
-                   panic_message.contains("expected 'String'"), 
-                   "Panic message should mention expected type String, got: {}", panic_message);
-            assert!(panic_message.contains("but got 'i32'"), 
-                   "Panic message should mention actual type i32, got: {}", panic_message);
+            assert!(
+                panic_message.contains("expected 'alloc::string::String'")
+                    || panic_message.contains("expected 'String'"),
+                "Panic message should mention expected type String, got: {}",
+                panic_message
+            );
+            assert!(
+                panic_message.contains("but got 'i32'"),
+                "Panic message should mention actual type i32, got: {}",
+                panic_message
+            );
         }
     }
 
     #[test]
     fn test_reply_take_type_mismatch_common_types() {
         // Test error messages for various common type mismatches
-        
+
         // Test i32 -> String mismatch
         let mut effect1 = Effect::new(Test::GetValue);
         effect1.fill_boxed(Box::new(42i32));
         let reply1 = effect1.get_reply();
-        
+
         let result1 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _: String = reply1.take();
         }));
         assert!(result1.is_err());
-        
+
         // Test String -> i32 mismatch
         let mut effect2 = Effect::new(Test::GetValue);
         effect2.fill_boxed(Box::new("hello".to_string()));
         let reply2 = effect2.get_reply();
-        
+
         let result2 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _: i32 = reply2.take();
         }));
         assert!(result2.is_err());
-        
+
         // Test () -> bool mismatch
         let mut effect3 = Effect::new(Test::GetValue);
         effect3.fill_boxed(Box::new(()));
         let reply3 = effect3.get_reply();
-        
+
         let result3 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _: bool = reply3.take();
         }));
@@ -1710,13 +1712,16 @@ mod tests {
         let mut effect = Effect::new(Test::GetValue);
         effect.fill_boxed(Box::new(Ok::<String, String>("success".to_string())));
         let reply = effect.get_reply();
-        
+
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let _: Result<i32, String> = reply.take();
         }));
-        
-        assert!(result.is_err(), "Expected panic when taking Result with wrong type");
-        
+
+        assert!(
+            result.is_err(),
+            "Expected panic when taking Result with wrong type"
+        );
+
         // Check that the panic message mentions Result types
         if let Err(panic_payload) = result {
             let panic_message = if let Some(panic_str) = panic_payload.downcast_ref::<&str>() {
@@ -1726,10 +1731,13 @@ mod tests {
             } else {
                 "Unknown panic message".to_string()
             };
-            
+
             // Should mention Result types
-            assert!(panic_message.contains("Result") && panic_message.contains("String"),
-                   "Panic message should mention Result types, got: {}", panic_message);
+            assert!(
+                panic_message.contains("Result") && panic_message.contains("String"),
+                "Panic message should mention Result types, got: {}",
+                panic_message
+            );
         }
     }
 
@@ -1737,14 +1745,14 @@ mod tests {
     fn test_one_shot_fill_and_get_success() {
         // Test the happy path: fill once, get once - should work perfectly
         let mut effect = Effect::new(Test::GetValue);
-        
+
         // Fill with a value
         effect.fill_boxed(Box::new(42i32));
-        
+
         // Get reply and extract value
         let reply = effect.get_reply();
         let value: i32 = reply.take();
-        
+
         assert_eq!(value, 42);
     }
 }
