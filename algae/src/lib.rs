@@ -375,7 +375,7 @@ impl Reply {
 /// - Returns `R` when the computation completes
 /// - Yields `Effect<Op>` when an effect needs to be handled
 type EffectCoroutine<R, Op> =
-    Pin<Box<dyn Coroutine<Option<Reply>, Return = R, Yield = Effect<Op>>>>;
+    Pin<Box<dyn Coroutine<Option<Reply>, Return = R, Yield = Effect<Op>> + Send>>;
 
 /// A wrapper around a coroutine that represents an effectful computation.
 ///
@@ -385,6 +385,12 @@ type EffectCoroutine<R, Op> =
 ///
 /// This is the core type returned by functions annotated with `#[effectful]`.
 /// It provides methods for running the computation with handlers.
+///
+/// ## Thread Safety
+///
+/// `Effectful` implements `Send`, allowing effectful computations to be transferred
+/// across thread boundaries. This enables concurrent and parallel execution patterns
+/// where computations can be spawned on different threads and their results collected.
 ///
 /// # Type Parameters
 ///
@@ -457,7 +463,7 @@ impl<R, Op: 'static> Effectful<R, Op> {
     /// ```
     pub fn new<G>(g: G) -> Self
     where
-        G: Coroutine<Option<Reply>, Return = R, Yield = Effect<Op>> + 'static,
+        G: Coroutine<Option<Reply>, Return = R, Yield = Effect<Op>> + 'static + Send,
     {
         Self { gen: Box::pin(g) }
     }
