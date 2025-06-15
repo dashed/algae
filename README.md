@@ -14,8 +14,6 @@
 > - 📚 **Learning Purpose**: Built primarily for exploring algebraic effects in Rust
 > - ⚠️ **Use at Your Own Risk**: Not suitable for any production systems
 > - 🧪 **Experimental**: Relies on unstable Rust nightly features
-> 
-> If you're looking for production-ready effect systems, consider established alternatives like async/await, dependency injection, or other mature libraries.
 
 ---
 
