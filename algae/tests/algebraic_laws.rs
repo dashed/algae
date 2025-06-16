@@ -1228,73 +1228,19 @@ fn test_effect_commutativity() {
     assert_eq!(ops1, vec!["Add(10, 5)", "Add(20, 3)", "Add(15, 23)"]);
     assert_eq!(ops2, vec!["Add(20, 3)", "Add(10, 5)", "Add(15, 23)"]);
 
-    // Additional test: Prove commutativity holds for ALL handlers, not just recording ones
-    // Use a handler that returns constant bogus values to ensure order is still irrelevant
-
-    #[derive(Clone)]
-    struct ConstantPureHandler {
-        constant: i32,
-    }
-
-    impl ConstantPureHandler {
-        fn new(constant: i32) -> Self {
-            Self { constant }
-        }
-    }
-
-    impl Handler<Op> for ConstantPureHandler {
-        fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
-            match op {
-                Op::Pure(Pure::Add(_)) => Box::new(self.constant),
-                Op::Pure(Pure::Multiply(_)) => Box::new(self.constant),
-                _ => panic!("ConstantPureHandler cannot handle operation: {op:?}"),
-            }
-        }
-    }
-
-    impl PartialHandler<Op> for ConstantPureHandler {
-        fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
-            match op {
-                Op::Pure(_) => Some(self.handle(op)),
-                _ => None,
-            }
-        }
-    }
-
-    // Test with constant handler returning 42 for all operations
-    let const_handler1 = ConstantPureHandler::new(42);
-    let const_handler2 = ConstantPureHandler::new(42);
-
-    let const_result1 = order1(10, 20).handle(const_handler1).run_checked().unwrap();
-    let const_result2 = order2(10, 20).handle(const_handler2).run_checked().unwrap();
-
-    // Even with a handler that ignores the actual operations and returns constants,
-    // the results should still be equal, proving commutativity for all handlers
-    assert_eq!(const_result1, const_result2);
-    assert_eq!(const_result1, 42); // All operations return 42, final result is 42
-
-    // Test with a different constant to be thorough
-    let const_handler3 = ConstantPureHandler::new(-7);
-    let const_handler4 = ConstantPureHandler::new(-7);
-
-    let const_result3 = order1(10, 20).handle(const_handler3).run_checked().unwrap();
-    let const_result4 = order2(10, 20).handle(const_handler4).run_checked().unwrap();
-
-    assert_eq!(const_result3, const_result4);
-    assert_eq!(const_result3, -7);
-
-    // EXPLANATION: Why this proves commutativity for all handlers
-    // ===========================================================
+    // EXPLANATION: Why this demonstrates commutativity for pure operations
+    // ====================================================================
     //
     // We've shown that:
-    // 1. With the normal PureHandler, both orders produce the same mathematical result
-    // 2. With the RecordingHandler, we see the operations happen in different orders
-    // 3. With the ConstantHandler, even when operations return bogus values,
-    //    both orders still produce the same final result
+    // 1. With the RecordingHandler, we see the operations happen in different orders
+    //    but produce the same mathematical result
+    // 2. The recording proves that the operations were actually executed in different
+    //    sequences, not optimized away
     //
-    // This proves that the commutativity property holds regardless of the handler
-    // implementation - the order of independent pure operations doesn't affect
-    // the final outcome for ANY handler.
+    // This demonstrates that for pure mathematical operations (like addition),
+    // the order of independent operations doesn't affect the final outcome.
+    // Note: This commutativity property is specific to these pure operations -
+    // it doesn't hold for all effects (see the next test for counter-examples).
 }
 
 /// LAW 7: EFFECT NON-COMMUTATIVITY - WHEN ORDER MATTERS!
