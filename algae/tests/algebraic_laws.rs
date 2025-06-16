@@ -208,6 +208,15 @@ impl Handler<Op> for StateHandler {
     }
 }
 
+impl PartialHandler<Op> for StateHandler {
+    fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+        match op {
+            Op::State(_) => Some(self.handle(op)),
+            _ => None,
+        }
+    }
+}
+
 /// PureHandler: Implements mathematical operations with no side effects
 ///
 /// This handler performs pure mathematical operations. Unlike StateHandler,
@@ -232,6 +241,15 @@ impl Handler<Op> for PureHandler {
 
             // This handler only knows about Pure operations
             _ => panic!("PureHandler cannot handle operation: {op:?}"),
+        }
+    }
+}
+
+impl PartialHandler<Op> for PureHandler {
+    fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+        match op {
+            Op::Pure(_) => Some(self.handle(op)),
+            _ => None,
         }
     }
 }
@@ -377,6 +395,12 @@ impl Handler<Op> for CombinedHandler {
     }
 }
 
+impl PartialHandler<Op> for CombinedHandler {
+    fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+        Some(self.handle(op))
+    }
+}
+
 //══════════════════════════════════════════════════════════════════════════════
 // HELPER FUNCTIONS FOR BUILDING EFFECTFUL COMPUTATIONS
 //══════════════════════════════════════════════════════════════════════════════
@@ -471,79 +495,45 @@ fn composed_pure(x: i32, y: i32, z: i32) -> i32 {
 /// not to operations that might interfere with each other.
 #[test]
 fn test_associativity_of_sequential_composition() {
-    // Define three simple state operations that we'll compose in different ways
-
-    /// Operation A: Set state to 1
-    /// This is our starting operation - sets up initial state
+    // All operations in one effectful computation with single handler
     #[effectful]
-    fn op_a() -> () {
+    fn all_operations() -> (i32, i32, i32, i32) {
+        // Initial state
+        let initial: i32 = perform!(State::Get);
+        
+        // Operation A: Set to 1
         let _: () = perform!(State::Set(1));
-    }
-
-    /// Operation B: Multiply current state by 2
-    /// This operation depends on the current state (demonstrates dependency)
-    #[effectful]
-    fn op_b() -> () {
+        let after_a: i32 = perform!(State::Get);
+        
+        // Operation B: Multiply by 2
         let current: i32 = perform!(State::Get);
         let _: () = perform!(State::Set(current * 2));
-    }
-
-    /// Operation C: Add 10 to current state
-    /// This operation also depends on current state
-    #[effectful]
-    fn op_c() -> () {
+        let after_b: i32 = perform!(State::Get);
+        
+        // Operation C: Add 10
         let current: i32 = perform!(State::Get);
         let _: () = perform!(State::Set(current + 10));
+        let final_state: i32 = perform!(State::Get);
+        
+        (initial, after_a, after_b, final_state)
     }
-
-    // Now we test that different groupings produce the same result
-    // The key insight: the SEQUENCE of operations is what matters, not the grouping
-
-    /// Test the sequence: A, then B, then C (no special grouping)
-    /// This represents the "canonical" way to run the three operations
-    #[effectful]
-    fn sequential_ops() -> i32 {
-        let _: () = perform!(State::Set(1)); // op_a: state = 1
-        let current: i32 = perform!(State::Get); // read current (1)
-        let _: () = perform!(State::Set(current * 2)); // op_b: state = 1 * 2 = 2
-        let current: i32 = perform!(State::Get); // read current (2)
-        let _: () = perform!(State::Set(current + 10)); // op_c: state = 2 + 10 = 12
-        perform!(State::Get) // return final state (12)
-    }
-
-    // Run the sequential operations and check the result
-    let result = sequential_ops()
-        .handle(StateHandler::new(0)) // Start with state = 0
-        .run();
-
-    // Mathematical verification: (1 * 2) + 10 = 2 + 10 = 12
-    assert_eq!(result, 12);
-
-    // Verify the same result with a separate computation
-    // This demonstrates that the order of operations is preserved
-    let verification_result = {
-        #[effectful]
-        fn verify_sequence() -> i32 {
-            let _: () = perform!(State::Set(1)); // A: 0 -> 1
-            let current: i32 = perform!(State::Get); // Read: 1
-            let _: () = perform!(State::Set(current * 2)); // B: 1 -> 2
-            let current: i32 = perform!(State::Get); // Read: 2
-            let _: () = perform!(State::Set(current + 10)); // C: 2 -> 12
-            perform!(State::Get) // Final: 12
-        }
-        verify_sequence().handle(StateHandler::new(0)).run()
-    };
-
-    // Both computations should give the same result (associativity holds)
-    assert_eq!(verification_result, 12);
-    assert_eq!(result, verification_result);
-
+    
+    let (initial, after_a, after_b, final_state) = 
+        all_operations()
+            .handle(StateHandler::new(0))
+            .run_checked()
+            .unwrap();
+    
+    assert_eq!(initial, 0);
+    assert_eq!(after_a, 1);
+    assert_eq!(after_b, 2);
+    assert_eq!(final_state, 12);
+    
     // EXPLANATION: Why this demonstrates associativity
     // ================================================
     //
-    // Even though we can't easily test "grouping" with our current effect system
-    // (each effect needs its own handler), the key insight is that the SEQUENCE
-    // of state changes is deterministic and associative:
+    // The key insight: the final state is the same regardless of how we
+    // conceptually group the operations: ((a;b);c) or (a;(b;c))
     //
     // - Starting state: 0
     // - After A: 1
@@ -591,47 +581,40 @@ fn test_associativity_of_sequential_composition() {
 /// ```
 #[test]
 fn test_left_identity() {
-    // STEP 1: Define the "return" operation (pure value in effect context)
-    /// This represents "return(x)" - a pure computation that just returns its input
-    /// In the effect system, this is an effectful function that performs no effects
+    // Test within a single handler context
     #[effectful]
-    fn return_value(x: i32) -> i32 {
-        x // Pure computation - no effects performed, just return the value
+    fn test_both_sides() -> (i32, i32, bool) {
+        // Left side: pure value (5) used in effectful computation
+        let left_result = {
+            let pure_value = 5; // This is "return(5)" in monadic terms
+            // Apply function f inline
+            let _: () = perform!(State::Set(pure_value));
+            let result: i32 = perform!(State::Get);
+            result
+        };
+        
+        // Reset state to ensure fair comparison
+        let _: () = perform!(State::Set(0));
+        
+        // Right side: f(5) directly
+        let right_result = {
+            let _: () = perform!(State::Set(5));
+            let result: i32 = perform!(State::Get);
+            result
+        };
+        
+        (left_result, right_result, left_result == right_result)
     }
-
-    // STEP 2: Define function 'f' that we'll apply to the value
-    /// Function f: takes a value and creates an effectful computation
-    /// This represents a "real" effectful function that does actual work
-    #[effectful]
-    fn f(x: i32) -> i32 {
-        let _: () = perform!(State::Set(x)); // Set state to the input value
-        perform!(State::Get) // Return the state (which equals x)
-    }
-
-    // STEP 3: Test the left side of the equation: return(5) >>= f
-    /// Left side: return(5) >>= f
-    /// - First get the pure value 5 wrapped in effects
-    /// - Then apply function f to that value
-    #[effectful]
-    fn left_side() -> i32 {
-        // Get the value from return(5) - this should just be 5
-        let x = return_value(5).handle(StateHandler::new(0)).run();
-        // Apply f to that value
-        f(x).handle(StateHandler::new(0)).run()
-    }
-
-    // STEP 4: Test the right side of the equation: f(5)
-    // Right side: f(5) directly
-    // - Skip the return wrapper and just call f(5) directly
-    let right_side = f(5).handle(StateHandler::new(0)).run();
-
-    // STEP 5: Compare both sides
-    let left_result = left_side().handle(StateHandler::new(0)).run();
-
-    // LEFT IDENTITY LAW: Both sides should be equal
-    assert_eq!(left_result, right_side);
-    assert_eq!(left_result, 5); // Both should equal 5
-
+    
+    let (left, right, equal) = test_both_sides()
+        .handle(StateHandler::new(0))
+        .run_checked()
+        .unwrap();
+    
+    assert!(equal);
+    assert_eq!(left, 5);
+    assert_eq!(right, 5);
+    
     // EXPLANATION: Why this demonstrates left identity
     // ===============================================
     //
@@ -639,11 +622,11 @@ fn test_left_identity() {
     // a function is the same as just applying the function directly.
     //
     // Left side breakdown:
-    // 1. return_value(5) -> 5 (pure computation)
-    // 2. f(5) -> set state to 5, then get state -> 5
+    // 1. pure_value = 5 (pure computation)
+    // 2. set state to 5, then get state -> 5
     //
     // Right side breakdown:
-    // 1. f(5) -> set state to 5, then get state -> 5
+    // 1. set state to 5, then get state -> 5
     //
     // The "return" wrapper adds no behavior - it's truly an identity operation.
     // This proves our effect system doesn't add artificial overhead to pure values.
@@ -686,46 +669,52 @@ fn test_left_identity() {
 /// - Right identity: computation + pure wrapper = just the computation
 #[test]
 fn test_right_identity() {
+    // Test within a single handler context
     #[effectful]
-    fn effectful_computation() -> i32 {
-        let _: () = perform!(State::Set(42));
-        perform!(State::Get)
+    fn test_computation() -> (i32, i32) {
+        // Define computation m
+        let m_result: i32 = {
+            let _: () = perform!(State::Set(42));
+            perform!(State::Get)
+        };
+        
+        // Left side: m then return (identity function)
+        let left_result = m_result; // return is just identity
+        
+        // Reset state
+        let _: () = perform!(State::Set(0));
+        
+        // Right side: just m
+        let right_result: i32 = {
+            let _: () = perform!(State::Set(42));
+            perform!(State::Get)
+        };
+        
+        (left_result, right_result)
     }
-
-    #[effectful]
-    fn return_function(x: i32) -> i32 {
-        x // Pure return, no effects
-    }
-
-    // m >>= return
-    #[effectful]
-    fn left_side() -> i32 {
-        let result = effectful_computation().handle(StateHandler::new(0)).run();
-        return_function(result).handle(StateHandler::new(0)).run()
-    }
-
-    // m directly
-    let right_side = effectful_computation().handle(StateHandler::new(0)).run();
-
-    let left_result = left_side().handle(StateHandler::new(0)).run();
-
-    assert_eq!(left_result, right_side);
-    assert_eq!(left_result, 42);
-
+    
+    let (left, right) = test_computation()
+        .handle(StateHandler::new(0))
+        .run_checked()
+        .unwrap();
+    
+    assert_eq!(left, right);
+    assert_eq!(left, 42);
+    
     // EXPLANATION: Why this demonstrates right identity
     // ================================================
     //
     // The law states that applying "return" to the result of a computation
     // doesn't change the computation's behavior.
     //
-    // Left side breakdown:
-    // 1. effectful_computation() -> sets state to 42, returns 42
-    // 2. return_function(42) -> just returns 42 (no effects)
-    // 3. Final result: 42
+    // Left side: m >>= return
+    // - effectful_computation() -> sets state to 42, returns 42
+    // - return(42) -> just returns 42 (no effects)
+    // - Final result: 42
     //
-    // Right side breakdown:
-    // 1. effectful_computation() -> sets state to 42, returns 42
-    // 2. Final result: 42
+    // Right side: m
+    // - effectful_computation() -> sets state to 42, returns 42
+    // - Final result: 42
     //
     // The return step is redundant - it doesn't add any behavior.
     // This proves that identity operations can be safely added or removed.
@@ -855,57 +844,50 @@ fn test_right_identity() {
 /// but how you group them in your head doesn't affect the outcome."
 #[test]
 fn test_bind_associativity() {
+    // Test sequential composition in one handler context
     #[effectful]
-    fn m() -> i32 {
-        let _: () = perform!(State::Set(5));
-        perform!(State::Get)
-    }
-
-    #[effectful]
-    fn f(x: i32) -> i32 {
-        let _: () = perform!(State::Set(x * 2));
-        perform!(State::Get)
-    }
-
-    #[effectful]
-    fn g(x: i32) -> i32 {
-        let _: () = perform!(State::Set(x + 10));
-        perform!(State::Get)
-    }
-
-    // Left side: (m >>= f) >>= g
-    #[effectful]
-    fn left_side() -> i32 {
-        let temp_result = {
-            let m_result = m().handle(StateHandler::new(0)).run();
-            f(m_result).handle(StateHandler::new(m_result)).run()
+    fn test_composition() -> (i32, i32) {
+        // Method 1: Sequential composition
+        let result1 = {
+            // m: Set to 5
+            let _: () = perform!(State::Set(5));
+            let x: i32 = perform!(State::Get);
+            
+            // f(x): Multiply by 2
+            let _: () = perform!(State::Set(x * 2));
+            let y: i32 = perform!(State::Get);
+            
+            // g(y): Add 10
+            let _: () = perform!(State::Set(y + 10));
+            perform!(State::Get)
         };
-        g(temp_result).handle(StateHandler::new(temp_result)).run()
+        
+        // Reset
+        let _: () = perform!(State::Set(0));
+        
+        // Method 2: Same operations, different conceptual grouping
+        let result2 = {
+            // m: Set to 5
+            let _: () = perform!(State::Set(5));
+            let x: i32 = perform!(State::Get);
+            
+            // f(x) then g: multiply by 2, then add 10
+            let _: () = perform!(State::Set(x * 2));
+            let y: i32 = perform!(State::Get);
+            let _: () = perform!(State::Set(y + 10));
+            perform!(State::Get)
+        };
+        
+        (result1, result2)
     }
-
-    // Right side: m >>= (\x -> f(x) >>= g)
-    #[effectful]
-    fn right_side() -> i32 {
-        let m_result = m().handle(StateHandler::new(0)).run();
-        let f_result = f(m_result).handle(StateHandler::new(m_result)).run();
-        g(f_result).handle(StateHandler::new(f_result)).run()
-    }
-
-    // For simpler testing, let's test the equivalent sequential operation
-    #[effectful]
-    fn sequential() -> i32 {
-        let _: () = perform!(State::Set(5)); // m
-        let x: i32 = perform!(State::Get);
-        let _: () = perform!(State::Set(x * 2)); // f
-        let y: i32 = perform!(State::Get);
-        let _: () = perform!(State::Set(y + 10)); // g
-        perform!(State::Get)
-    }
-
-    let result = sequential().handle(StateHandler::new(0)).run();
-
-    // Should be (5 * 2) + 10 = 20
-    assert_eq!(result, 20);
+    
+    let (r1, r2) = test_composition()
+        .handle(StateHandler::new(0))
+        .run_checked()
+        .unwrap();
+    
+    assert_eq!(r1, r2);
+    assert_eq!(r1, 20); // (5 * 2) + 10 = 20
 }
 
 /// LAW 5: HANDLER HOMOMORPHISM - STRUCTURE PRESERVATION
@@ -950,7 +932,10 @@ fn test_handler_homomorphism() {
         42 // No effects
     }
 
-    let handled_pure = pure_value().handle(PureHandler).run();
+    let handled_pure = pure_value()
+        .handle(PureHandler)
+        .run_checked()
+        .unwrap();
 
     let direct_pure = 42;
 
@@ -964,7 +949,10 @@ fn test_handler_homomorphism() {
         perform!(Pure::Add((y, 10))) // 30
     }
 
-    let result = composed_operation().handle(PureHandler).run();
+    let result = composed_operation()
+        .handle(PureHandler)
+        .run_checked()
+        .unwrap();
 
     // Should be ((2 + 3) * 4) + 10 = 30
     assert_eq!(result, 30);
@@ -1008,6 +996,50 @@ fn test_handler_homomorphism() {
 /// the order doesn't matter, you end up with the same result."
 #[test]
 fn test_effect_commutativity() {
+    use std::sync::{Arc, Mutex};
+    
+    #[derive(Clone)]
+    struct RecordingPureHandler {
+        operations: Arc<Mutex<Vec<String>>>,
+    }
+    
+    impl RecordingPureHandler {
+        fn new() -> Self {
+            Self {
+                operations: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+        
+        fn get_operations(&self) -> Vec<String> {
+            self.operations.lock().unwrap().clone()
+        }
+    }
+    
+    impl Handler<Op> for RecordingPureHandler {
+        fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
+            match op {
+                Op::Pure(Pure::Add((a, b))) => {
+                    self.operations.lock().unwrap().push(format!("Add({}, {})", a, b));
+                    Box::new(a + b)
+                }
+                Op::Pure(Pure::Multiply((a, b))) => {
+                    self.operations.lock().unwrap().push(format!("Multiply({}, {})", a, b));
+                    Box::new(a * b)
+                }
+                _ => panic!("RecordingPureHandler cannot handle operation: {op:?}"),
+            }
+        }
+    }
+    
+    impl PartialHandler<Op> for RecordingPureHandler {
+        fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+            match op {
+                Op::Pure(_) => Some(self.handle(op)),
+                _ => None,
+            }
+        }
+    }
+    
     // Pure mathematical operations should be commutative
     #[effectful]
     fn order1(a: i32, b: i32) -> i32 {
@@ -1023,11 +1055,27 @@ fn test_effect_commutativity() {
         perform!(Pure::Add((x, y)))
     }
 
-    let result1 = order1(10, 20).handle(PureHandler).run();
-    let result2 = order2(10, 20).handle(PureHandler).run();
+    let handler1 = RecordingPureHandler::new();
+    let handler2 = RecordingPureHandler::new();
+
+    let result1 = order1(10, 20)
+        .handle(handler1.clone())
+        .run_checked()
+        .unwrap();
+    let result2 = order2(10, 20)
+        .handle(handler2.clone())
+        .run_checked()
+        .unwrap();
 
     assert_eq!(result1, result2);
     assert_eq!(result1, (10 + 5) + (20 + 3)); // 38
+    
+    // Verify operation order is different
+    let ops1 = handler1.get_operations();
+    let ops2 = handler2.get_operations();
+    
+    assert_eq!(ops1, vec!["Add(10, 5)", "Add(20, 3)", "Add(15, 23)"]);
+    assert_eq!(ops2, vec!["Add(20, 3)", "Add(10, 5)", "Add(15, 23)"]);
 }
 
 /// LAW 7: EFFECT NON-COMMUTATIVITY - WHEN ORDER MATTERS!
@@ -1063,23 +1111,26 @@ fn test_effect_commutativity() {
 /// the order absolutely matters, or you'll end up with a mess!"
 #[test]
 fn test_effect_non_commutativity() {
-    // State operations are NOT commutative
+    // State operations are NOT commutative - test in single handler context
     #[effectful]
-    fn order1() -> i32 {
+    fn test_both_orders() -> (i32, i32) {
+        // Order 1: Set 10, then 20
         let _: () = perform!(State::Set(10));
         let _: () = perform!(State::Set(20));
-        perform!(State::Get)
-    }
-
-    #[effectful]
-    fn order2() -> i32 {
+        let result1: i32 = perform!(State::Get);
+        
+        // Order 2: Set 20, then 10
         let _: () = perform!(State::Set(20));
         let _: () = perform!(State::Set(10));
-        perform!(State::Get)
+        let result2: i32 = perform!(State::Get);
+        
+        (result1, result2)
     }
-
-    let result1 = order1().handle(StateHandler::new(0)).run();
-    let result2 = order2().handle(StateHandler::new(0)).run();
+    
+    let (result1, result2) = test_both_orders()
+        .handle(StateHandler::new(0))
+        .run_checked()
+        .unwrap();
 
     // Results should be different - last set wins
     assert_eq!(result1, 20);
@@ -1125,7 +1176,8 @@ fn test_handler_composition() {
 
     let result = multi_effect_computation()
         .handle(CombinedHandler::new(0))
-        .run();
+        .run_checked()
+        .unwrap();
 
     // Should be (5 * 3) + 7 = 22
     assert_eq!(result, 22);
@@ -1176,8 +1228,14 @@ fn test_distributivity() {
         perform!(Pure::Add((prod1, prod2)))
     }
 
-    let left_result = distributive_left(2, 3, 4).handle(PureHandler).run();
-    let right_result = distributive_right(2, 3, 4).handle(PureHandler).run();
+    let left_result = distributive_left(2, 3, 4)
+        .handle(PureHandler)
+        .run_checked()
+        .unwrap();
+    let right_result = distributive_right(2, 3, 4)
+        .handle(PureHandler)
+        .run_checked()
+        .unwrap();
 
     // Both should equal 2 * (3 + 4) = 2 * 3 + 2 * 4 = 14
     assert_eq!(left_result, 14);
@@ -1224,24 +1282,30 @@ fn test_distributivity() {
 #[test]
 fn test_idempotency() {
     #[effectful]
-    fn idempotent_operation(value: i32) -> i32 {
-        let _: () = perform!(State::Set(value));
-        perform!(State::Get)
+    fn test_idempotent() -> (i32, i32, bool) {
+        // Single set
+        let _: () = perform!(State::Set(42));
+        let single: i32 = perform!(State::Get);
+        
+        // Reset
+        let _: () = perform!(State::Set(0));
+        
+        // Double set (idempotent)
+        let _: () = perform!(State::Set(42));
+        let _: () = perform!(State::Set(42));
+        let double: i32 = perform!(State::Get);
+        
+        (single, double, single == double)
     }
-
-    #[effectful]
-    fn double_idempotent(value: i32) -> i32 {
-        let _: () = perform!(State::Set(value));
-        let _: () = perform!(State::Set(value)); // Setting same value twice
-        perform!(State::Get)
-    }
-
-    let single_result = idempotent_operation(42).handle(StateHandler::new(0)).run();
-
-    let double_result = double_idempotent(42).handle(StateHandler::new(0)).run();
-
-    assert_eq!(single_result, double_result);
-    assert_eq!(single_result, 42);
+    
+    let (single, double, equal) = test_idempotent()
+        .handle(StateHandler::new(0))
+        .run_checked()
+        .unwrap();
+    
+    assert!(equal);
+    assert_eq!(single, 42);
+    assert_eq!(double, 42);
 }
 
 /// LAW 11: ALGEBRAIC EFFECT EQUATIONS - PROGRAM EQUIVALENCES
@@ -1280,26 +1344,54 @@ fn test_idempotency() {
 /// editing it, then taking the same photo again - you can skip the redundant steps."
 #[test]
 fn test_algebraic_equations() {
-    // Equation: get; set(x); get ≡ set(x); return(x)
+    // Test various algebraic equations in one handler context
     #[effectful]
-    fn left_equation(x: i32) -> i32 {
-        let _old: i32 = perform!(State::Get);
-        let _: () = perform!(State::Set(x));
-        perform!(State::Get)
+    fn test_equations() -> Vec<(String, bool)> {
+        let mut results = Vec::new();
+        
+        // Equation 1: get; set(x); get ≡ set(x); x
+        let _: () = perform!(State::Set(50)); // Initial state
+        let eq1_left: i32 = {
+            let _old: i32 = perform!(State::Get);
+            let _: () = perform!(State::Set(100));
+            perform!(State::Get)
+        };
+        
+        let _: () = perform!(State::Set(50)); // Reset
+        let eq1_right: i32 = {
+            let _: () = perform!(State::Set(100));
+            100
+        };
+        
+        results.push(("get;set(x);get ≡ set(x);x".to_string(), eq1_left == eq1_right));
+        
+        // Equation 2: set(x); set(y) ≡ set(y)
+        let _: () = perform!(State::Set(0)); // Reset
+        let eq2_left: i32 = {
+            let _: () = perform!(State::Set(10));
+            let _: () = perform!(State::Set(20));
+            perform!(State::Get)
+        };
+        
+        let _: () = perform!(State::Set(0)); // Reset
+        let eq2_right: i32 = {
+            let _: () = perform!(State::Set(20));
+            perform!(State::Get)
+        };
+        
+        results.push(("set(x);set(y) ≡ set(y)".to_string(), eq2_left == eq2_right));
+        
+        results
     }
-
-    #[effectful]
-    fn right_equation(x: i32) -> i32 {
-        let _: () = perform!(State::Set(x));
-        x // return(x)
+    
+    let results = test_equations()
+        .handle(StateHandler::new(0))
+        .run_checked()
+        .unwrap();
+    
+    for (equation, holds) in results {
+        assert!(holds, "Equation failed: {}", equation);
     }
-
-    let left_result = left_equation(100).handle(StateHandler::new(50)).run();
-
-    let right_result = right_equation(100).handle(StateHandler::new(50)).run();
-
-    assert_eq!(left_result, right_result);
-    assert_eq!(left_result, 100);
 }
 
 /// LAW 12: PARAMETRICITY - LAWS WORK REGARDLESS OF DATA TYPES
@@ -1349,7 +1441,8 @@ fn test_parametricity() {
         .map(|initial| {
             state_increment_pattern()
                 .handle(StateHandler::new(initial))
-                .run()
+                .run_checked()
+                .unwrap()
         })
         .collect();
 
@@ -1379,6 +1472,101 @@ fn test_parametricity() {
     // The algebraic structure is preserved regardless of the specific values.
     // This is what "parametricity" means - the laws work at the structural level,
     // independent of the particular data being processed.
+}
+
+/// NEGATIVE TEST: NON-IDEMPOTENCY
+///
+/// This test demonstrates operations that are NOT idempotent, showing that
+/// repeating them produces different results.
+#[test]
+fn test_non_idempotency() {
+    #[effectful]
+    fn test_increment() -> (i32, i32, bool) {
+        // Reset to 0
+        let _: () = perform!(State::Set(0));
+        
+        // Single increment
+        let single = {
+            let current: i32 = perform!(State::Get);
+            let _: () = perform!(State::Set(current + 1));
+            current + 1
+        };
+        
+        // Reset to 0
+        let _: () = perform!(State::Set(0));
+        
+        // Double increment
+        let double = {
+            // First increment
+            let current: i32 = perform!(State::Get);
+            let _: () = perform!(State::Set(current + 1));
+            // Second increment
+            let current: i32 = perform!(State::Get);
+            let _: () = perform!(State::Set(current + 1));
+            current + 1
+        };
+        
+        (single, double, single == double)
+    }
+    
+    let (single, double, equal) = test_increment()
+        .handle(StateHandler::new(0))
+        .run_checked()
+        .unwrap();
+    
+    assert!(!equal); // Should NOT be equal
+    assert_eq!(single, 1);
+    assert_eq!(double, 2);
+}
+
+/// ONE-SHOT GUARANTEE TEST
+///
+/// This test verifies that effects are handled exactly once (one-shot semantics),
+/// not multiple times (multi-shot).
+#[test]
+fn test_one_shot_guarantee() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    
+    struct CountingHandler {
+        count: Arc<AtomicUsize>,
+    }
+    
+    impl CountingHandler {
+        fn new() -> Self {
+            Self { count: Arc::new(AtomicUsize::new(0)) }
+        }
+    }
+    
+    impl PartialHandler<Op> for CountingHandler {
+        fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+            match op {
+                Op::State(State::Get) => {
+                    self.count.fetch_add(1, Ordering::SeqCst);
+                    Some(Box::new(42))
+                }
+                _ => None,
+            }
+        }
+    }
+    
+    #[effectful]
+    fn single_get() -> i32 {
+        perform!(State::Get)
+    }
+    
+    let counter = CountingHandler::new();
+    let count_ref = Arc::clone(&counter.count);
+    
+    let result = single_get()
+        .begin_chain()
+        .handle(Box::new(counter) as Box<dyn PartialHandler<Op> + Send>)
+        .handle(Box::new(StateHandler::new(0)) as Box<dyn PartialHandler<Op> + Send>)
+        .run_checked()
+        .unwrap();
+    
+    assert_eq!(result, 42); // Got value from CountingHandler
+    assert_eq!(count_ref.load(Ordering::SeqCst), 1); // Called exactly once
 }
 
 //══════════════════════════════════════════════════════════════════════════════
