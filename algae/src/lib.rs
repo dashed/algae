@@ -149,6 +149,9 @@ struct Stored {
     type_id: TypeId,
 }
 
+// Stored is Send because Box<dyn Any + Send> is Send
+// We cannot derive Clone because Box<dyn Any + Send> is not Clone
+
 /// A type-erased container for handler replies that can be safely extracted.
 ///
 /// A `Reply` holds the result from a handler after it processes an effect operation.
@@ -188,11 +191,15 @@ struct Stored {
 /// let result = example().handle(TestHandler).run();
 /// assert_eq!(result, 42);
 /// ```
+#[derive(Debug)]
 pub struct Reply {
     /// Storage for the reply value along with its type information
     /// We use Option to track whether the value has been taken (one-shot semantics)
     inner: Option<Stored>,
 }
+
+// Reply is Send because Stored is Send
+// We cannot derive Clone because Stored contains Box<dyn Any + Send> which is not Clone
 
 /// Error type for reply extraction failures.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -290,9 +297,9 @@ fn lookup_type_name(id: TypeId) -> String {
     if let Ok(map) = type_names.lock() {
         map.get(&id)
             .map(|&s| s.to_string())
-            .unwrap_or_else(|| format!("<unknown type with TypeId {:?}>", id))
+            .unwrap_or_else(|| format!("<unknown type with TypeId {id:?}>"))
     } else {
-        format!("<unknown type with TypeId {:?}>", id)
+        format!("<unknown type with TypeId {id:?}>")
     }
 }
 
@@ -3616,5 +3623,19 @@ mod tests {
             }
             _ => panic!("Expected WrongType error"),
         }
+    }
+
+    #[test]
+    fn test_reply_debug() {
+        // Test that Reply implements Debug
+        let mut effect = Effect::new(Test::GetValue);
+        effect.fill_boxed(Box::new(42i32));
+        let reply = effect.get_reply();
+
+        let debug_str = format!("{reply:?}");
+        assert!(debug_str.contains("Reply"));
+        assert!(debug_str.contains("inner"));
+        assert!(debug_str.contains("Some"));
+        assert!(debug_str.contains("Stored"));
     }
 }
