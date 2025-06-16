@@ -614,7 +614,7 @@ fn test_left_identity() {
     // Test left identity: return(5) >>= f ≡ f(5)
 
     // Left side: return(5) >>= f
-    let lhs = ret(5).bind(|x| f(x));
+    let lhs = ret(5).bind(f);
 
     // Right side: f(5)
     let rhs = f(5);
@@ -694,7 +694,7 @@ fn test_right_identity() {
     // Test right identity: m >>= return ≡ m
 
     // Left side: m >>= return
-    let lhs = m().bind(|x| return_function(x));
+    let lhs = m().bind(return_function);
 
     // Right side: just m
     let rhs = m();
@@ -1057,14 +1057,14 @@ fn test_effect_commutativity() {
                     self.operations
                         .lock()
                         .unwrap()
-                        .push(format!("Add({}, {})", a, b));
+                        .push(format!("Add({a}, {b})"));
                     Box::new(a + b)
                 }
                 Op::Pure(Pure::Multiply((a, b))) => {
                     self.operations
                         .lock()
                         .unwrap()
-                        .push(format!("Multiply({}, {})", a, b));
+                        .push(format!("Multiply({a}, {b})"));
                     Box::new(a * b)
                 }
                 _ => panic!("RecordingPureHandler cannot handle operation: {op:?}"),
@@ -1515,7 +1515,7 @@ fn test_algebraic_equations() {
         .unwrap();
 
     for (equation, holds) in results {
-        assert!(holds, "Equation failed: {}", equation);
+        assert!(holds, "Equation failed: {equation}");
     }
 }
 

@@ -437,7 +437,7 @@ impl<R, Op: 'static> Effectful<R, Op> {
     /// # Arguments
     ///
     /// * `f` - A function that takes the result of this computation and returns
-    ///         a new effectful computation
+    ///   a new effectful computation
     ///
     /// # Returns
     ///
