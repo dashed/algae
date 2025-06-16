@@ -280,6 +280,22 @@ pub fn register_type<T: Any + 'static>() {
     }
 }
 
+/// Look up a type name from the registry (cold path for error handling).
+/// This function is marked as #[cold] to keep it out of the hot instruction cache.
+#[cold]
+fn lookup_type_name(id: TypeId) -> String {
+    // Ensure the registry is initialized
+    let type_names = TYPE_NAMES.get_or_init(|| Mutex::new(common_type_names()));
+
+    if let Ok(map) = type_names.lock() {
+        map.get(&id)
+            .map(|&s| s.to_string())
+            .unwrap_or_else(|| format!("<unknown type with TypeId {:?}>", id))
+    } else {
+        format!("<unknown type with TypeId {:?}>", id)
+    }
+}
+
 impl<Op> Effect<Op> {
     /// Creates a new effect with the given operation and no reply.
     ///
@@ -416,36 +432,21 @@ impl Reply {
     /// }
     /// ```
     pub fn try_take<R: Any + Send + 'static>(&mut self) -> Result<R, ReplyError> {
-        let stored = self.inner.take().ok_or(ReplyError::AlreadyTaken)?;
+        // 1. Fast-path: is there still a value?
+        let Some(stored) = self.inner.as_ref() else {
+            return Err(ReplyError::AlreadyTaken);
+        };
 
+        // 2. Type check first, *without* moving the value.
         if stored.type_id != TypeId::of::<R>() {
-            // Look up the actual type name in the registry
-            // First ensure the registry is initialized
-            let _ = TYPE_NAMES.get_or_init(|| Mutex::new(common_type_names()));
-
-            let actual = if let Some(type_names) = TYPE_NAMES.get() {
-                if let Ok(map) = type_names.lock() {
-                    map.get(&stored.type_id)
-                        .map(|&s| s.to_string())
-                        .unwrap_or_else(|| {
-                            format!("<unknown type with TypeId {:?}>", stored.type_id)
-                        })
-                } else {
-                    format!("<unknown type with TypeId {:?}>", stored.type_id)
-                }
-            } else {
-                format!("<unknown type with TypeId {:?}>", stored.type_id)
-            };
-
-            // Put the value back since we're not taking it
-            self.inner = Some(stored);
-
             return Err(ReplyError::WrongType {
                 expected: std::any::type_name::<R>(),
-                actual,
+                actual: lookup_type_name(stored.type_id),
             });
         }
 
+        // 3. Now we can safely move it out.
+        let stored = self.inner.take().unwrap();
         Ok(*stored
             .value
             .downcast::<R>()
