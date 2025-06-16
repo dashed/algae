@@ -229,6 +229,37 @@ impl std::error::Error for ReplyError {}
 /// Global registry mapping TypeId to human-readable type names.
 static TYPE_NAMES: OnceLock<Mutex<HashMap<TypeId, &'static str>>> = OnceLock::new();
 
+/// Creates a HashMap with common primitive and standard library types pre-registered.
+/// This is used to initialize the type registry with human-readable names for common types.
+fn common_type_names() -> HashMap<TypeId, &'static str> {
+    let mut map = HashMap::new();
+    // Pre-register common primitive and standard library types
+    map.insert(TypeId::of::<i8>(), "i8");
+    map.insert(TypeId::of::<i16>(), "i16");
+    map.insert(TypeId::of::<i32>(), "i32");
+    map.insert(TypeId::of::<i64>(), "i64");
+    map.insert(TypeId::of::<i128>(), "i128");
+    map.insert(TypeId::of::<isize>(), "isize");
+    map.insert(TypeId::of::<u8>(), "u8");
+    map.insert(TypeId::of::<u16>(), "u16");
+    map.insert(TypeId::of::<u32>(), "u32");
+    map.insert(TypeId::of::<u64>(), "u64");
+    map.insert(TypeId::of::<u128>(), "u128");
+    map.insert(TypeId::of::<usize>(), "usize");
+    map.insert(TypeId::of::<f32>(), "f32");
+    map.insert(TypeId::of::<f64>(), "f64");
+    map.insert(TypeId::of::<bool>(), "bool");
+    map.insert(TypeId::of::<char>(), "char");
+    map.insert(TypeId::of::<String>(), "String");
+    map.insert(TypeId::of::<&str>(), "&str");
+    map.insert(TypeId::of::<()>(), "()");
+    map.insert(TypeId::of::<Vec<u8>>(), "Vec<u8>");
+    map.insert(TypeId::of::<Vec<String>>(), "Vec<String>");
+    map.insert(TypeId::of::<Option<String>>(), "Option<String>");
+    map.insert(TypeId::of::<Result<(), String>>(), "Result<(), String>");
+    map
+}
+
 /// Register a type with the global type name registry.
 ///
 /// This allows the library to provide better error messages when type mismatches occur.
@@ -242,34 +273,7 @@ static TYPE_NAMES: OnceLock<Mutex<HashMap<TypeId, &'static str>>> = OnceLock::ne
 /// algae::register_type::<Vec<MyDomainType>>();
 /// ```
 pub fn register_type<T: Any + 'static>() {
-    let type_names = TYPE_NAMES.get_or_init(|| {
-        let mut map = HashMap::new();
-        // Pre-register common primitive and standard library types
-        map.insert(TypeId::of::<i8>(), "i8");
-        map.insert(TypeId::of::<i16>(), "i16");
-        map.insert(TypeId::of::<i32>(), "i32");
-        map.insert(TypeId::of::<i64>(), "i64");
-        map.insert(TypeId::of::<i128>(), "i128");
-        map.insert(TypeId::of::<isize>(), "isize");
-        map.insert(TypeId::of::<u8>(), "u8");
-        map.insert(TypeId::of::<u16>(), "u16");
-        map.insert(TypeId::of::<u32>(), "u32");
-        map.insert(TypeId::of::<u64>(), "u64");
-        map.insert(TypeId::of::<u128>(), "u128");
-        map.insert(TypeId::of::<usize>(), "usize");
-        map.insert(TypeId::of::<f32>(), "f32");
-        map.insert(TypeId::of::<f64>(), "f64");
-        map.insert(TypeId::of::<bool>(), "bool");
-        map.insert(TypeId::of::<char>(), "char");
-        map.insert(TypeId::of::<String>(), "String");
-        map.insert(TypeId::of::<&str>(), "&str");
-        map.insert(TypeId::of::<()>(), "()");
-        map.insert(TypeId::of::<Vec<u8>>(), "Vec<u8>");
-        map.insert(TypeId::of::<Vec<String>>(), "Vec<String>");
-        map.insert(TypeId::of::<Option<String>>(), "Option<String>");
-        map.insert(TypeId::of::<Result<(), String>>(), "Result<(), String>");
-        Mutex::new(map)
-    });
+    let type_names = TYPE_NAMES.get_or_init(|| Mutex::new(common_type_names()));
 
     if let Ok(mut map) = type_names.lock() {
         map.insert(TypeId::of::<T>(), std::any::type_name::<T>());
@@ -417,34 +421,7 @@ impl Reply {
         if stored.type_id != TypeId::of::<R>() {
             // Look up the actual type name in the registry
             // First ensure the registry is initialized
-            let _ = TYPE_NAMES.get_or_init(|| {
-                let mut map = HashMap::new();
-                // Pre-register common primitive and standard library types
-                map.insert(TypeId::of::<i8>(), "i8");
-                map.insert(TypeId::of::<i16>(), "i16");
-                map.insert(TypeId::of::<i32>(), "i32");
-                map.insert(TypeId::of::<i64>(), "i64");
-                map.insert(TypeId::of::<i128>(), "i128");
-                map.insert(TypeId::of::<isize>(), "isize");
-                map.insert(TypeId::of::<u8>(), "u8");
-                map.insert(TypeId::of::<u16>(), "u16");
-                map.insert(TypeId::of::<u32>(), "u32");
-                map.insert(TypeId::of::<u64>(), "u64");
-                map.insert(TypeId::of::<u128>(), "u128");
-                map.insert(TypeId::of::<usize>(), "usize");
-                map.insert(TypeId::of::<f32>(), "f32");
-                map.insert(TypeId::of::<f64>(), "f64");
-                map.insert(TypeId::of::<bool>(), "bool");
-                map.insert(TypeId::of::<char>(), "char");
-                map.insert(TypeId::of::<String>(), "String");
-                map.insert(TypeId::of::<&str>(), "&str");
-                map.insert(TypeId::of::<()>(), "()");
-                map.insert(TypeId::of::<Vec<u8>>(), "Vec<u8>");
-                map.insert(TypeId::of::<Vec<String>>(), "Vec<String>");
-                map.insert(TypeId::of::<Option<String>>(), "Option<String>");
-                map.insert(TypeId::of::<Result<(), String>>(), "Result<(), String>");
-                Mutex::new(map)
-            });
+            let _ = TYPE_NAMES.get_or_init(|| Mutex::new(common_type_names()));
 
             let actual = if let Some(type_names) = TYPE_NAMES.get() {
                 if let Ok(map) = type_names.lock() {
