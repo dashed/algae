@@ -272,12 +272,28 @@ fn common_type_names() -> HashMap<TypeId, &'static str> {
 /// This allows the library to provide better error messages when type mismatches occur.
 /// Call this function at startup for any custom types you want to have named in error messages.
 ///
-/// # Examples
+/// ## Semantics
+///
+/// - Registration is **global**: Once registered, a type's name is available for all future errors
+/// - Registration is **persistent**: Type names remain registered for the lifetime of the program
+/// - Registration is **lazy**: Types are only recognized in error messages after registration
+/// - Unregistered types show as `<unknown type with TypeId ...>` in error messages
+///
+/// The registry is initialized with common primitive and standard library types (like `i32`,
+/// `String`, `Vec<u8>`, etc.). Custom application types must be explicitly registered to
+/// appear in error messages with their proper names.
+///
+/// ## Example
 ///
 /// ```rust,ignore
 /// # struct MyDomainType;
+/// // Before registration: error shows "<unknown type with TypeId ...>"
 /// algae::register_type::<MyDomainType>();
+/// // After registration: error shows "MyDomainType"
+///
+/// // You can also register generic types
 /// algae::register_type::<Vec<MyDomainType>>();
+/// algae::register_type::<Option<MyDomainType>>();
 /// ```
 pub fn register_type<T: Any + 'static>() {
     let type_names = TYPE_NAMES.get_or_init(|| Mutex::new(common_type_names()));
@@ -3637,5 +3653,97 @@ mod tests {
         assert!(debug_str.contains("inner"));
         assert!(debug_str.contains("Some"));
         assert!(debug_str.contains("Stored"));
+    }
+
+    #[test]
+    fn test_register_type_before_and_after() {
+        // This test demonstrates the "unknown-then-known" behavior of register_type.
+        // It shows that types are only recognized in error messages after they've been
+        // registered, even if the same type was used in a previous error.
+
+        // Define a custom type that isn't pre-registered
+        #[derive(Debug)]
+        struct UnregisteredCustomType {
+            data: String,
+        }
+
+        impl UnregisteredCustomType {
+            fn new(data: &str) -> Self {
+                Self {
+                    data: data.to_string(),
+                }
+            }
+
+            #[allow(dead_code)]
+            fn data(&self) -> &str {
+                &self.data
+            }
+        }
+
+        // PART 1: Before registration - type should show as "unknown"
+        let mut effect1 = Effect::new(Test::GetValue);
+        effect1.fill_boxed(Box::new(UnregisteredCustomType::new("test")));
+        let mut reply1 = effect1.get_reply();
+
+        let result1 = reply1.try_take::<i32>();
+        match result1 {
+            Err(ReplyError::WrongType { expected, actual }) => {
+                assert!(expected.contains("i32"));
+                // Before registration, should show as unknown type
+                assert!(
+                    actual.contains("unknown type"),
+                    "Before registration, type should be unknown. Got: {actual}"
+                );
+                assert!(
+                    actual.contains("TypeId"),
+                    "Unknown types should show TypeId. Got: {actual}"
+                );
+            }
+            _ => panic!("Expected WrongType error"),
+        }
+
+        // PART 2: Register the type
+        register_type::<UnregisteredCustomType>();
+
+        // PART 3: After registration - same type should now show its name
+        let mut effect2 = Effect::new(Test::GetValue);
+        effect2.fill_boxed(Box::new(UnregisteredCustomType::new("test2")));
+        let mut reply2 = effect2.get_reply();
+
+        let result2 = reply2.try_take::<String>();
+        match result2 {
+            Err(ReplyError::WrongType { expected, actual }) => {
+                assert!(expected.contains("String"));
+                // After registration, should show the actual type name
+                assert!(
+                    actual.contains("UnregisteredCustomType"),
+                    "After registration, type name should be shown. Got: {actual}"
+                );
+                assert!(
+                    !actual.contains("unknown type"),
+                    "After registration, should not show 'unknown type'. Got: {actual}"
+                );
+            }
+            _ => panic!("Expected WrongType error"),
+        }
+
+        // PART 4: Verify that registration is global and persistent
+        // Try the same type in another error to confirm it's still registered
+        let mut effect3 = Effect::new(Test::GetValue);
+        effect3.fill_boxed(Box::new(UnregisteredCustomType::new("test3")));
+        let mut reply3 = effect3.get_reply();
+
+        let result3 = reply3.try_take::<bool>();
+        match result3 {
+            Err(ReplyError::WrongType { expected, actual }) => {
+                assert!(expected.contains("bool"));
+                // Should still show the registered name
+                assert!(
+                    actual.contains("UnregisteredCustomType"),
+                    "Type should remain registered. Got: {actual}"
+                );
+            }
+            _ => panic!("Expected WrongType error"),
+        }
     }
 }
