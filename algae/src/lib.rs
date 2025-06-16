@@ -88,9 +88,11 @@
 
 #![feature(coroutines, coroutine_trait)]
 use std::{
-    any::Any,
+    any::{Any, TypeId},
+    collections::HashMap,
     ops::{Coroutine, CoroutineState},
     pin::Pin,
+    sync::{Mutex, OnceLock},
 };
 
 /// An effect operation request paired with a slot for the handler's reply.
@@ -140,6 +142,13 @@ pub struct Effect<Op: 'static> {
     reply: Option<Box<dyn Any + Send>>,
 }
 
+/// Internal storage for a reply value along with its type information.
+#[derive(Debug)]
+struct Stored {
+    value: Box<dyn Any + Send>,
+    type_id: TypeId,
+}
+
 /// A type-erased container for handler replies that can be safely extracted.
 ///
 /// A `Reply` holds the result from a handler after it processes an effect operation.
@@ -180,8 +189,91 @@ pub struct Effect<Op: 'static> {
 /// assert_eq!(result, 42);
 /// ```
 pub struct Reply {
-    /// Type-erased storage for the handler's response value
-    value: Box<dyn Any + Send>,
+    /// Storage for the reply value along with its type information
+    /// We use Option to track whether the value has been taken (one-shot semantics)
+    inner: Option<Stored>,
+}
+
+/// Error type for reply extraction failures.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReplyError {
+    /// The reply has already been taken.
+    AlreadyTaken,
+    /// Type mismatch between expected and actual types.
+    WrongType {
+        /// The expected type name.
+        expected: &'static str,
+        /// The actual type name (if known).
+        actual: String,
+    },
+}
+
+impl std::fmt::Display for ReplyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReplyError::AlreadyTaken => {
+                write!(
+                    f,
+                    "Reply::take called, but no value was supplied (possibly already taken)"
+                )
+            }
+            ReplyError::WrongType { expected, actual } => {
+                write!(f, "Reply::take type mismatch: expected `{expected}`, but reply contains `{actual}`")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ReplyError {}
+
+/// Global registry mapping TypeId to human-readable type names.
+static TYPE_NAMES: OnceLock<Mutex<HashMap<TypeId, &'static str>>> = OnceLock::new();
+
+/// Register a type with the global type name registry.
+///
+/// This allows the library to provide better error messages when type mismatches occur.
+/// Call this function at startup for any custom types you want to have named in error messages.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # struct MyDomainType;
+/// algae::register_type::<MyDomainType>();
+/// algae::register_type::<Vec<MyDomainType>>();
+/// ```
+pub fn register_type<T: Any + 'static>() {
+    let type_names = TYPE_NAMES.get_or_init(|| {
+        let mut map = HashMap::new();
+        // Pre-register common primitive and standard library types
+        map.insert(TypeId::of::<i8>(), "i8");
+        map.insert(TypeId::of::<i16>(), "i16");
+        map.insert(TypeId::of::<i32>(), "i32");
+        map.insert(TypeId::of::<i64>(), "i64");
+        map.insert(TypeId::of::<i128>(), "i128");
+        map.insert(TypeId::of::<isize>(), "isize");
+        map.insert(TypeId::of::<u8>(), "u8");
+        map.insert(TypeId::of::<u16>(), "u16");
+        map.insert(TypeId::of::<u32>(), "u32");
+        map.insert(TypeId::of::<u64>(), "u64");
+        map.insert(TypeId::of::<u128>(), "u128");
+        map.insert(TypeId::of::<usize>(), "usize");
+        map.insert(TypeId::of::<f32>(), "f32");
+        map.insert(TypeId::of::<f64>(), "f64");
+        map.insert(TypeId::of::<bool>(), "bool");
+        map.insert(TypeId::of::<char>(), "char");
+        map.insert(TypeId::of::<String>(), "String");
+        map.insert(TypeId::of::<&str>(), "&str");
+        map.insert(TypeId::of::<()>(), "()");
+        map.insert(TypeId::of::<Vec<u8>>(), "Vec<u8>");
+        map.insert(TypeId::of::<Vec<String>>(), "Vec<String>");
+        map.insert(TypeId::of::<Option<String>>(), "Option<String>");
+        map.insert(TypeId::of::<Result<(), String>>(), "Result<(), String>");
+        Mutex::new(map)
+    });
+
+    if let Ok(mut map) = type_names.lock() {
+        map.insert(TypeId::of::<T>(), std::any::type_name::<T>());
+    }
 }
 
 impl<Op> Effect<Op> {
@@ -244,6 +336,8 @@ impl<Op> Effect<Op> {
     pub fn fill_boxed(&mut self, r: Box<dyn Any + Send>) {
         assert!(self.reply.is_none(), "reply filled twice");
         self.reply = Some(r);
+        // Note: we store type_id in Reply when converting in get_reply()
+        // This is because Effect stores Box<dyn Any + Send> directly
     }
 
     /// Consumes the effect and extracts the reply value (one-shot consumption).
@@ -280,11 +374,107 @@ impl<Op> Effect<Op> {
     /// ```
     pub fn get_reply(self) -> Reply {
         let reply_value = self.reply.expect("Effect has no reply");
-        Reply { value: reply_value }
+        let type_id = (*reply_value).type_id();
+        Reply {
+            inner: Some(Stored {
+                value: reply_value,
+                type_id,
+            }),
+        }
     }
 }
 
 impl Reply {
+    /// Attempts to extract the contained value with the specified type.
+    ///
+    /// This method performs a runtime type check to ensure the stored value
+    /// matches the requested type `R`. If successful, it returns the value.
+    /// If the types don't match or the value was already taken, it returns an error.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `R` - The expected type of the contained value. Must implement `Any + Send`.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(R)` - The contained value of type `R`
+    /// * `Err(ReplyError)` - If the value was already taken or type mismatch
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// # use algae::prelude::*;
+    /// # effect! { Test::GetValue -> i32; }
+    /// match reply.try_take::<i32>() {
+    ///     Ok(value) => println!("Got value: {}", value),
+    ///     Err(e) => eprintln!("Error: {}", e),
+    /// }
+    /// ```
+    pub fn try_take<R: Any + Send + 'static>(&mut self) -> Result<R, ReplyError> {
+        let stored = self.inner.take().ok_or(ReplyError::AlreadyTaken)?;
+
+        if stored.type_id != TypeId::of::<R>() {
+            // Look up the actual type name in the registry
+            // First ensure the registry is initialized
+            let _ = TYPE_NAMES.get_or_init(|| {
+                let mut map = HashMap::new();
+                // Pre-register common primitive and standard library types
+                map.insert(TypeId::of::<i8>(), "i8");
+                map.insert(TypeId::of::<i16>(), "i16");
+                map.insert(TypeId::of::<i32>(), "i32");
+                map.insert(TypeId::of::<i64>(), "i64");
+                map.insert(TypeId::of::<i128>(), "i128");
+                map.insert(TypeId::of::<isize>(), "isize");
+                map.insert(TypeId::of::<u8>(), "u8");
+                map.insert(TypeId::of::<u16>(), "u16");
+                map.insert(TypeId::of::<u32>(), "u32");
+                map.insert(TypeId::of::<u64>(), "u64");
+                map.insert(TypeId::of::<u128>(), "u128");
+                map.insert(TypeId::of::<usize>(), "usize");
+                map.insert(TypeId::of::<f32>(), "f32");
+                map.insert(TypeId::of::<f64>(), "f64");
+                map.insert(TypeId::of::<bool>(), "bool");
+                map.insert(TypeId::of::<char>(), "char");
+                map.insert(TypeId::of::<String>(), "String");
+                map.insert(TypeId::of::<&str>(), "&str");
+                map.insert(TypeId::of::<()>(), "()");
+                map.insert(TypeId::of::<Vec<u8>>(), "Vec<u8>");
+                map.insert(TypeId::of::<Vec<String>>(), "Vec<String>");
+                map.insert(TypeId::of::<Option<String>>(), "Option<String>");
+                map.insert(TypeId::of::<Result<(), String>>(), "Result<(), String>");
+                Mutex::new(map)
+            });
+
+            let actual = if let Some(type_names) = TYPE_NAMES.get() {
+                if let Ok(map) = type_names.lock() {
+                    map.get(&stored.type_id)
+                        .map(|&s| s.to_string())
+                        .unwrap_or_else(|| {
+                            format!("<unknown type with TypeId {:?}>", stored.type_id)
+                        })
+                } else {
+                    format!("<unknown type with TypeId {:?}>", stored.type_id)
+                }
+            } else {
+                format!("<unknown type with TypeId {:?}>", stored.type_id)
+            };
+
+            // Put the value back since we're not taking it
+            self.inner = Some(stored);
+
+            return Err(ReplyError::WrongType {
+                expected: std::any::type_name::<R>(),
+                actual,
+            });
+        }
+
+        Ok(*stored
+            .value
+            .downcast::<R>()
+            .expect("TypeId check guaranteed success"))
+    }
+
     /// Extracts the contained value with the specified type (one-shot extraction).
     ///
     /// This method performs a runtime type check to ensure the stored value
@@ -307,8 +497,8 @@ impl Reply {
     ///
     /// # Panics
     ///
-    /// Panics if the contained value is not of type `R`. The panic message
-    /// includes both the expected type name and the actual type ID for debugging.
+    /// Panics if the contained value is not of type `R` or if the value was already taken.
+    /// The panic message includes both the expected and actual type names for debugging.
     ///
     /// # Examples
     ///
@@ -331,57 +521,10 @@ impl Reply {
     /// let result = example().handle(TestHandler).run();
     /// assert_eq!(result, 42);
     /// ```
-    pub fn take<R: Any + Send>(self) -> R {
-        match self.value.downcast::<R>() {
-            Ok(val) => *val,
-            Err(boxed_value) => {
-                let expected_name = std::any::type_name::<R>();
-
-                // Since we can't get the concrete type name from a trait object,
-                // we'll use a hybrid approach: check common types first, then fall back
-                // to showing both the expected type and the TypeId
-                let actual_type_id = (*boxed_value).type_id();
-
-                // Helper to check if the boxed value is of a specific type
-                let type_name = if boxed_value.is::<i32>() {
-                    Some("i32")
-                } else if boxed_value.is::<i64>() {
-                    Some("i64")
-                } else if boxed_value.is::<u32>() {
-                    Some("u32")
-                } else if boxed_value.is::<u64>() {
-                    Some("u64")
-                } else if boxed_value.is::<f32>() {
-                    Some("f32")
-                } else if boxed_value.is::<f64>() {
-                    Some("f64")
-                } else if boxed_value.is::<bool>() {
-                    Some("bool")
-                } else if boxed_value.is::<String>() {
-                    Some("String")
-                } else if boxed_value.is::<&str>() {
-                    Some("&str")
-                } else if boxed_value.is::<()>() {
-                    Some("()")
-                } else if boxed_value.is::<Vec<u8>>() {
-                    Some("Vec<u8>")
-                } else if boxed_value.is::<Vec<String>>() {
-                    Some("Vec<String>")
-                } else {
-                    None
-                };
-
-                match type_name {
-                    Some(name) => panic!(
-                        "Type mismatch when taking reply: expected '{expected_name}', but got '{name}'. \
-                         This usually means the handler returned the wrong type for this effect operation."
-                    ),
-                    None => panic!(
-                        "Type mismatch when taking reply: expected type '{expected_name}', but handler returned a different type (TypeId: {actual_type_id:?}). \
-                         This usually means the handler returned the wrong type for this effect operation."
-                    ),
-                }
-            }
+    pub fn take<R: Any + Send + 'static>(mut self) -> R {
+        match self.try_take() {
+            Ok(v) => v,
+            Err(e) => panic!("{}", e),
         }
     }
 }
@@ -1485,8 +1628,9 @@ impl<R, Op: 'static + Send> Handled<R, Op, VecHandler<Op>> {
 /// your effect types and handlers manually using the core types.
 pub mod prelude {
     pub use crate::{
-        Effect, Effectful, Handler, HandlerWrapper, IntoPartialHandler, IntoVecHandler,
-        PartialHandler, Reply, UnhandledOp, UnhandledOpError, VecHandler,
+        register_type, Effect, Effectful, Handler, HandlerWrapper, IntoPartialHandler,
+        IntoVecHandler, PartialHandler, Reply, ReplyError, UnhandledOp, UnhandledOpError,
+        VecHandler,
     };
 
     #[cfg(feature = "macros")]
@@ -2349,12 +2493,13 @@ mod tests {
 
             // Should mention both expected and actual types
             assert!(
-                panic_message.contains("expected 'alloc::string::String'")
-                    || panic_message.contains("expected 'String'"),
+                panic_message.contains("expected `alloc::string::String`")
+                    || panic_message.contains("expected 'alloc::string::String'")
+                    || panic_message.contains("expected `String`"),
                 "Panic message should mention expected type String, got: {panic_message}"
             );
             assert!(
-                panic_message.contains("but got 'i32'"),
+                panic_message.contains("but reply contains `i32`"),
                 "Panic message should mention actual type i32, got: {panic_message}"
             );
         }
@@ -3338,5 +3483,160 @@ mod tests {
             .run_checked();
 
         assert_eq!(result.unwrap(), 60);
+    }
+
+    // ============================================================================
+    // Improved Error Message Tests (TypeId Storage and Registry)
+    // ============================================================================
+
+    #[test]
+    fn test_reply_try_take_success() {
+        // Test successful try_take
+        let mut effect = Effect::new(Test::GetValue);
+        effect.fill_boxed(Box::new(42i32));
+        let mut reply = effect.get_reply();
+
+        let result = reply.try_take::<i32>();
+        assert_eq!(result.unwrap(), 42);
+    }
+
+    #[test]
+    fn test_reply_try_take_already_taken() {
+        // Test try_take when value already taken
+        let mut effect = Effect::new(Test::GetValue);
+        effect.fill_boxed(Box::new(42i32));
+        let mut reply = effect.get_reply();
+
+        // First take succeeds
+        let result1 = reply.try_take::<i32>();
+        assert_eq!(result1.unwrap(), 42);
+
+        // Second take returns AlreadyTaken error
+        let result2 = reply.try_take::<i32>();
+        assert!(matches!(result2, Err(ReplyError::AlreadyTaken)));
+    }
+
+    #[test]
+    fn test_reply_try_take_wrong_type() {
+        // Test try_take with wrong type
+        let mut effect = Effect::new(Test::GetValue);
+        effect.fill_boxed(Box::new(42i32));
+        let mut reply = effect.get_reply();
+
+        let result = reply.try_take::<String>();
+        match result {
+            Err(ReplyError::WrongType { expected, actual }) => {
+                assert!(expected.contains("String"));
+                // With pre-registered types, we should get "i32"
+                // Check for either the type name or unknown type message
+                assert!(
+                    actual.contains("i32") || actual.contains("unknown type"),
+                    "Expected 'i32' or 'unknown type' in actual: {actual}"
+                );
+            }
+            _ => panic!("Expected WrongType error"),
+        }
+    }
+
+    #[test]
+    fn test_register_type_custom() {
+        // Test registering a custom type
+        #[derive(Debug)]
+        struct CustomType {
+            value: i32,
+        }
+
+        impl CustomType {
+            fn value(&self) -> i32 {
+                self.value
+            }
+        }
+
+        // Register the custom type
+        register_type::<CustomType>();
+
+        // Create an effect with the custom type
+        let mut effect = Effect::new(Test::GetValue);
+        let custom = CustomType { value: 42 };
+        assert_eq!(custom.value(), 42); // Use the field
+        effect.fill_boxed(Box::new(custom));
+        let mut reply = effect.get_reply();
+
+        // Try to take with wrong type - should show our custom type name
+        let result = reply.try_take::<String>();
+        match result {
+            Err(ReplyError::WrongType { expected, actual }) => {
+                assert!(expected.contains("String"));
+                assert!(actual.contains("CustomType"));
+            }
+            _ => panic!("Expected WrongType error"),
+        }
+    }
+
+    #[test]
+    fn test_reply_error_display() {
+        // Test Display implementation for ReplyError
+        let err1 = ReplyError::AlreadyTaken;
+        assert_eq!(
+            err1.to_string(),
+            "Reply::take called, but no value was supplied (possibly already taken)"
+        );
+
+        let err2 = ReplyError::WrongType {
+            expected: "String",
+            actual: "i32".to_string(),
+        };
+        assert_eq!(
+            err2.to_string(),
+            "Reply::take type mismatch: expected `String`, but reply contains `i32`"
+        );
+    }
+
+    #[test]
+    fn test_reply_take_panics_with_good_message() {
+        // Test that take() method panics with proper error message
+        let mut effect = Effect::new(Test::GetValue);
+        effect.fill_boxed(Box::new(42i32));
+        let reply = effect.get_reply();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _: String = reply.take();
+        }));
+
+        assert!(result.is_err());
+        if let Err(panic_payload) = result {
+            let panic_message = if let Some(panic_str) = panic_payload.downcast_ref::<&str>() {
+                panic_str.to_string()
+            } else if let Some(panic_string) = panic_payload.downcast_ref::<String>() {
+                panic_string.clone()
+            } else {
+                "Unknown panic message".to_string()
+            };
+
+            assert!(panic_message.contains("type mismatch"));
+            assert!(panic_message.contains("expected"));
+            assert!(panic_message.contains("but reply contains"));
+        }
+    }
+
+    #[test]
+    fn test_unknown_type_fallback() {
+        // Test behavior with an unregistered type (should show TypeId)
+        struct UnregisteredType;
+
+        let mut effect = Effect::new(Test::GetValue);
+        effect.fill_boxed(Box::new(UnregisteredType));
+        let mut reply = effect.get_reply();
+
+        let result = reply.try_take::<String>();
+        match result {
+            Err(ReplyError::WrongType { expected, actual }) => {
+                assert!(expected.contains("String"));
+                // Should show unknown type with TypeId
+                assert!(actual.contains("unknown type"));
+                assert!(actual.contains("TypeId"));
+            }
+            _ => panic!("Expected WrongType error"),
+        }
     }
 }
