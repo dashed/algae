@@ -426,11 +426,13 @@ pub struct Effectful<R, Op: 'static> {
 }
 
 impl<R, Op: 'static> Effectful<R, Op> {
-    /// Monadic bind operation for sequencing effectful computations.
+    /// Monadic bind (`>>=`) – sequence two effectful computations.
     ///
-    /// This method allows you to sequence two effectful computations where the
-    /// second computation depends on the result of the first. This is the monadic
-    /// bind operation, also known as `>>=` in Haskell or `flatMap` in Scala.
+    /// The left-hand computation (`self`) is run first.  
+    /// When it finishes, its result is passed to `f` to build the
+    /// right-hand computation, which is then run with the **same** handler
+    /// stream. All effects are yielded outwards in the order they occur, so
+    /// to the handler it looks like one flat computation.
     ///
     /// # Arguments
     ///
@@ -466,35 +468,38 @@ impl<R, Op: 'static> Effectful<R, Op> {
         F: FnOnce(R) -> Effectful<S, Op> + Send + 'static,
         R: Send + 'static,
         S: Send + 'static,
-        Op: Send,
+        Op: Send + 'static,
     {
+        // Extract the pinned generator from `self` **outside** the closure,
+        // because `self` will be moved into the closure body.
+        let lhs_gen = self.gen; // type = Pin<Box<...>>
+
         Effectful::new(
             #[coroutine]
             move |mut reply: Option<Reply>| {
-                // Create a pinned version of self to run it
-                let mut first = Box::pin(self.gen);
-                
-                // Run the first computation to completion
-                let first_result = loop {
-                    match first.as_mut().resume(reply.take()) {
-                        CoroutineState::Complete(r) => break r,
+                // Stage 1: run the left-hand computation
+                let mut lhs = lhs_gen;
+                let lhs_result = loop {
+                    match lhs.as_mut().resume(reply.take()) {
                         CoroutineState::Yielded(eff) => {
-                            reply = yield eff;
+                            reply = yield eff; // forward to handler
                         }
+                        CoroutineState::Complete(res) => break res,
                     }
                 };
-                
-                // Apply the function to get the second computation
-                let second = f(first_result);
-                let mut second_gen = Box::pin(second.gen);
-                
-                // Run the second computation to completion
+
+                // Reset: after lhs has finished there is *no* pending reply.
+                reply = None;
+
+                // Stage 2: build and run the right-hand side
+                let mut rhs = f(lhs_result).gen; // already pinned
+
                 loop {
-                    match second_gen.as_mut().resume(reply.take()) {
-                        CoroutineState::Complete(r) => return r,
+                    match rhs.as_mut().resume(reply.take()) {
                         CoroutineState::Yielded(eff) => {
                             reply = yield eff;
                         }
+                        CoroutineState::Complete(out) => return out,
                     }
                 }
             },
