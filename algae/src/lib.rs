@@ -337,32 +337,50 @@ impl Reply {
             Err(boxed_value) => {
                 let expected_name = std::any::type_name::<R>();
 
-                // Try to identify some common types to provide better error messages
-                let any_ref = boxed_value.as_ref() as &dyn Any;
-                let actual_type = if any_ref.is::<i32>() {
-                    "i32"
-                } else if any_ref.is::<String>() {
-                    "String"
-                } else if any_ref.is::<()>() {
-                    "()"
-                } else if any_ref.is::<bool>() {
-                    "bool"
-                } else if any_ref.is::<f64>() {
-                    "f64"
-                } else if any_ref.is::<usize>() {
-                    "usize"
-                } else if any_ref.is::<Result<String, String>>() {
-                    "Result<String, String>"
-                } else if any_ref.is::<Result<(), String>>() {
-                    "Result<(), String>"
-                } else if any_ref.is::<Result<i32, String>>() {
-                    "Result<i32, String>"
+                // Since we can't get the concrete type name from a trait object,
+                // we'll use a hybrid approach: check common types first, then fall back
+                // to showing both the expected type and the TypeId
+                let actual_type_id = (*boxed_value).type_id();
+
+                // Helper to check if the boxed value is of a specific type
+                let type_name = if boxed_value.is::<i32>() {
+                    Some("i32")
+                } else if boxed_value.is::<i64>() {
+                    Some("i64")
+                } else if boxed_value.is::<u32>() {
+                    Some("u32")
+                } else if boxed_value.is::<u64>() {
+                    Some("u64")
+                } else if boxed_value.is::<f32>() {
+                    Some("f32")
+                } else if boxed_value.is::<f64>() {
+                    Some("f64")
+                } else if boxed_value.is::<bool>() {
+                    Some("bool")
+                } else if boxed_value.is::<String>() {
+                    Some("String")
+                } else if boxed_value.is::<&str>() {
+                    Some("&str")
+                } else if boxed_value.is::<()>() {
+                    Some("()")
+                } else if boxed_value.is::<Vec<u8>>() {
+                    Some("Vec<u8>")
+                } else if boxed_value.is::<Vec<String>>() {
+                    Some("Vec<String>")
                 } else {
-                    "<unknown type>"
+                    None
                 };
 
-                panic!("Type mismatch when taking reply: expected '{expected_name}', but got '{actual_type}'. \
-                       This usually means the handler returned the wrong type for this effect operation.");
+                match type_name {
+                    Some(name) => panic!(
+                        "Type mismatch when taking reply: expected '{expected_name}', but got '{name}'. \
+                         This usually means the handler returned the wrong type for this effect operation."
+                    ),
+                    None => panic!(
+                        "Type mismatch when taking reply: expected type '{expected_name}', but handler returned a different type (TypeId: {actual_type_id:?}). \
+                         This usually means the handler returned the wrong type for this effect operation."
+                    ),
+                }
             }
         }
     }
