@@ -426,6 +426,81 @@ pub struct Effectful<R, Op: 'static> {
 }
 
 impl<R, Op: 'static> Effectful<R, Op> {
+    /// Monadic bind operation for sequencing effectful computations.
+    ///
+    /// This method allows you to sequence two effectful computations where the
+    /// second computation depends on the result of the first. This is the monadic
+    /// bind operation, also known as `>>=` in Haskell or `flatMap` in Scala.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - A function that takes the result of this computation and returns
+    ///         a new effectful computation
+    ///
+    /// # Returns
+    ///
+    /// A new effectful computation that runs this computation first, then applies
+    /// the function to its result to get the next computation to run.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// # use algae::prelude::*;
+    /// # effect! { State::Get -> i32; State::Set (i32) -> (); }
+    /// #[effectful]
+    /// fn get_value() -> i32 {
+    ///     perform!(State::Get)
+    /// }
+    ///
+    /// #[effectful]
+    /// fn set_doubled(x: i32) -> () {
+    ///     perform!(State::Set(x * 2))
+    /// }
+    ///
+    /// // Using bind to sequence computations
+    /// let computation = get_value().bind(|x| set_doubled(x));
+    /// ```
+    pub fn bind<S, F>(self, f: F) -> Effectful<S, Op>
+    where
+        F: FnOnce(R) -> Effectful<S, Op> + Send + 'static,
+        R: Send + 'static,
+        S: Send + 'static,
+        Op: Send,
+    {
+        Effectful::new(
+            #[coroutine]
+            move |mut reply: Option<Reply>| {
+                // Create a pinned version of self to run it
+                let mut first = Box::pin(self.gen);
+                
+                // Run the first computation to completion
+                let first_result = loop {
+                    match first.as_mut().resume(reply.take()) {
+                        CoroutineState::Complete(r) => break r,
+                        CoroutineState::Yielded(eff) => {
+                            reply = yield eff;
+                        }
+                    }
+                };
+                
+                // Apply the function to get the second computation
+                let second = f(first_result);
+                let mut second_gen = Box::pin(second.gen);
+                
+                // Run the second computation to completion
+                loop {
+                    match second_gen.as_mut().resume(reply.take()) {
+                        CoroutineState::Complete(r) => return r,
+                        CoroutineState::Yielded(eff) => {
+                            reply = yield eff;
+                        }
+                    }
+                }
+            },
+        )
+    }
+
     /// Creates a new effectful computation from a coroutine.
     ///
     /// This is typically called by the `#[effectful]` macro to wrap the generated

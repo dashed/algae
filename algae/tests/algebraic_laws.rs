@@ -495,54 +495,67 @@ fn composed_pure(x: i32, y: i32, z: i32) -> i32 {
 /// not to operations that might interfere with each other.
 #[test]
 fn test_associativity_of_sequential_composition() {
-    // All operations in one effectful computation with single handler
+    // Define the three operations as separate effectful functions
     #[effectful]
-    fn all_operations() -> (i32, i32, i32, i32) {
-        // Initial state
-        let initial: i32 = perform!(State::Get);
-        
+    fn op_a() -> () {
         // Operation A: Set to 1
         let _: () = perform!(State::Set(1));
-        let after_a: i32 = perform!(State::Get);
-        
+    }
+    
+    #[effectful]
+    fn op_b() -> () {
         // Operation B: Multiply by 2
         let current: i32 = perform!(State::Get);
         let _: () = perform!(State::Set(current * 2));
-        let after_b: i32 = perform!(State::Get);
-        
+    }
+    
+    #[effectful]
+    fn op_c() -> () {
         // Operation C: Add 10
         let current: i32 = perform!(State::Get);
         let _: () = perform!(State::Set(current + 10));
-        let final_state: i32 = perform!(State::Get);
-        
-        (initial, after_a, after_b, final_state)
     }
     
-    let (initial, after_a, after_b, final_state) = 
-        all_operations()
-            .handle(StateHandler::new(0))
-            .run_checked()
-            .unwrap();
+    // Test left-grouped parenthesization: ((a >> b) >> c)
+    // Using bind to explicitly show the grouping
+    let left = op_a().bind(|_| op_b()).bind(|_| op_c());
     
-    assert_eq!(initial, 0);
-    assert_eq!(after_a, 1);
-    assert_eq!(after_b, 2);
-    assert_eq!(final_state, 12);
+    // Test right-grouped parenthesization: (a >> (b >> c))
+    // Using bind to explicitly show the grouping
+    let right = op_a().bind(|_| op_b().bind(|_| op_c()));
+    
+    // Create a function to get final state after operations
+    #[effectful]
+    fn get_final_state() -> i32 {
+        perform!(State::Get)
+    }
+    
+    // Run both parenthesizations with fresh handlers and get final state
+    let left_result = left.bind(|_| get_final_state())
+        .handle(StateHandler::new(0))
+        .run_checked()
+        .unwrap();
+    
+    let right_result = right.bind(|_| get_final_state())
+        .handle(StateHandler::new(0))
+        .run_checked()
+        .unwrap();
+    
+    // Both should produce the same result
+    assert_eq!(left_result, right_result);
+    assert_eq!(left_result, 12); // (1 * 2) + 10 = 12
     
     // EXPLANATION: Why this demonstrates associativity
     // ================================================
     //
-    // The key insight: the final state is the same regardless of how we
-    // conceptually group the operations: ((a;b);c) or (a;(b;c))
+    // We've used the bind method to explicitly show both parenthesizations:
+    // - Left: op_a().bind(|_| op_b()).bind(|_| op_c())
+    //   This represents ((a >> b) >> c)
+    // - Right: op_a().bind(|_| op_b().bind(|_| op_c()))
+    //   This represents (a >> (b >> c))
     //
-    // - Starting state: 0
-    // - After A: 1
-    // - After B: 1 * 2 = 2
-    // - After C: 2 + 10 = 12
-    //
-    // No matter how we group these operations conceptually, as long as they
-    // execute in the same order (A, then B, then C), we get the same result.
-    // This is what associativity guarantees for sequential composition.
+    // Both produce the same final state (12), proving that the associativity
+    // law holds for sequential composition in algae's effect system.
 }
 
 /// LAW 2: LEFT IDENTITY FOR RETURN/PURE
@@ -581,55 +594,54 @@ fn test_associativity_of_sequential_composition() {
 /// ```
 #[test]
 fn test_left_identity() {
-    // Test within a single handler context
+    // Define the monadic return function
     #[effectful]
-    fn test_both_sides() -> (i32, i32, bool) {
-        // Left side: pure value (5) used in effectful computation
-        let left_result = {
-            let pure_value = 5; // This is "return(5)" in monadic terms
-            // Apply function f inline
-            let _: () = perform!(State::Set(pure_value));
-            let result: i32 = perform!(State::Get);
-            result
-        };
-        
-        // Reset state to ensure fair comparison
-        let _: () = perform!(State::Set(0));
-        
-        // Right side: f(5) directly
-        let right_result = {
-            let _: () = perform!(State::Set(5));
-            let result: i32 = perform!(State::Get);
-            result
-        };
-        
-        (left_result, right_result, left_result == right_result)
+    fn ret(x: i32) -> i32 {
+        x // Pure computation - no effects
     }
     
-    let (left, right, equal) = test_both_sides()
+    // Define function f that we'll test with
+    #[effectful]
+    fn f(x: i32) -> i32 {
+        // Set state to x and return doubled value
+        let _: () = perform!(State::Set(x));
+        let value: i32 = perform!(State::Get);
+        value * 2
+    }
+    
+    // Test left identity: return(5) >>= f ≡ f(5)
+    
+    // Left side: return(5) >>= f
+    let lhs = ret(5).bind(|x| f(x));
+    
+    // Right side: f(5)
+    let rhs = f(5);
+    
+    // Run both with fresh handlers
+    let lhs_result = lhs
+        .handle(StateHandler::new(0))
+        .run_checked()
+        .unwrap();
+        
+    let rhs_result = rhs
         .handle(StateHandler::new(0))
         .run_checked()
         .unwrap();
     
-    assert!(equal);
-    assert_eq!(left, 5);
-    assert_eq!(right, 5);
+    // Both should produce the same result
+    assert_eq!(lhs_result, rhs_result);
+    assert_eq!(lhs_result, 10); // 5 * 2
     
     // EXPLANATION: Why this demonstrates left identity
     // ===============================================
     //
-    // The law states that wrapping a value in "return" and then applying
-    // a function is the same as just applying the function directly.
+    // We've shown that:
+    // - ret(5).bind(|x| f(x)) = wrap 5 in effects, then apply f
+    // - f(5) = apply f directly to 5
     //
-    // Left side breakdown:
-    // 1. pure_value = 5 (pure computation)
-    // 2. set state to 5, then get state -> 5
-    //
-    // Right side breakdown:
-    // 1. set state to 5, then get state -> 5
-    //
-    // The "return" wrapper adds no behavior - it's truly an identity operation.
-    // This proves our effect system doesn't add artificial overhead to pure values.
+    // Both produce the same result (10), proving that wrapping a value
+    // in the monadic return and then binding with f is equivalent to
+    // just applying f directly. The monadic return adds no behavior.
 }
 
 /// LAW 3: RIGHT IDENTITY FOR RETURN/PURE
@@ -669,55 +681,53 @@ fn test_left_identity() {
 /// - Right identity: computation + pure wrapper = just the computation
 #[test]
 fn test_right_identity() {
-    // Test within a single handler context
+    // Define the monadic return function
     #[effectful]
-    fn test_computation() -> (i32, i32) {
-        // Define computation m
-        let m_result: i32 = {
-            let _: () = perform!(State::Set(42));
-            perform!(State::Get)
-        };
-        
-        // Left side: m then return (identity function)
-        let left_result = m_result; // return is just identity
-        
-        // Reset state
-        let _: () = perform!(State::Set(0));
-        
-        // Right side: just m
-        let right_result: i32 = {
-            let _: () = perform!(State::Set(42));
-            perform!(State::Get)
-        };
-        
-        (left_result, right_result)
+    fn return_function(x: i32) -> i32 {
+        x // Pure computation - no effects
     }
     
-    let (left, right) = test_computation()
+    // Define an effectful computation m
+    #[effectful]
+    fn m() -> i32 {
+        let _: () = perform!(State::Set(42));
+        let result: i32 = perform!(State::Get);
+        result
+    }
+    
+    // Test right identity: m >>= return ≡ m
+    
+    // Left side: m >>= return
+    let lhs = m().bind(|x| return_function(x));
+    
+    // Right side: just m
+    let rhs = m();
+    
+    // Run both with fresh handlers
+    let lhs_result = lhs
+        .handle(StateHandler::new(0))
+        .run_checked()
+        .unwrap();
+        
+    let rhs_result = rhs
         .handle(StateHandler::new(0))
         .run_checked()
         .unwrap();
     
-    assert_eq!(left, right);
-    assert_eq!(left, 42);
+    // Both should produce the same result
+    assert_eq!(lhs_result, rhs_result);
+    assert_eq!(lhs_result, 42);
     
     // EXPLANATION: Why this demonstrates right identity
     // ================================================
     //
-    // The law states that applying "return" to the result of a computation
-    // doesn't change the computation's behavior.
+    // We've shown that:
+    // - m().bind(|x| return_function(x)) = run m, then wrap result in return
+    // - m() = just run m
     //
-    // Left side: m >>= return
-    // - effectful_computation() -> sets state to 42, returns 42
-    // - return(42) -> just returns 42 (no effects)
-    // - Final result: 42
-    //
-    // Right side: m
-    // - effectful_computation() -> sets state to 42, returns 42
-    // - Final result: 42
-    //
-    // The return step is redundant - it doesn't add any behavior.
-    // This proves that identity operations can be safely added or removed.
+    // Both produce the same result (42), proving that binding an effectful
+    // computation with the monadic return is equivalent to just running
+    // the computation. The return wrapper adds no behavior or effects.
 }
 
 //══════════════════════════════════════════════════════════════════════════════
@@ -844,50 +854,65 @@ fn test_right_identity() {
 /// but how you group them in your head doesn't affect the outcome."
 #[test]
 fn test_bind_associativity() {
-    // Test sequential composition in one handler context
+    // Define effectful computations
     #[effectful]
-    fn test_composition() -> (i32, i32) {
-        // Method 1: Sequential composition
-        let result1 = {
-            // m: Set to 5
-            let _: () = perform!(State::Set(5));
-            let x: i32 = perform!(State::Get);
-            
-            // f(x): Multiply by 2
-            let _: () = perform!(State::Set(x * 2));
-            let y: i32 = perform!(State::Get);
-            
-            // g(y): Add 10
-            let _: () = perform!(State::Set(y + 10));
-            perform!(State::Get)
-        };
-        
-        // Reset
-        let _: () = perform!(State::Set(0));
-        
-        // Method 2: Same operations, different conceptual grouping
-        let result2 = {
-            // m: Set to 5
-            let _: () = perform!(State::Set(5));
-            let x: i32 = perform!(State::Get);
-            
-            // f(x) then g: multiply by 2, then add 10
-            let _: () = perform!(State::Set(x * 2));
-            let y: i32 = perform!(State::Get);
-            let _: () = perform!(State::Set(y + 10));
-            perform!(State::Get)
-        };
-        
-        (result1, result2)
+    fn m() -> i32 {
+        // Set to 5 and return the value
+        let _: () = perform!(State::Set(5));
+        perform!(State::Get)
     }
     
-    let (r1, r2) = test_composition()
+    #[effectful] 
+    fn f(x: i32) -> i32 {
+        // Multiply by 2
+        let _: () = perform!(State::Set(x * 2));
+        perform!(State::Get)
+    }
+    
+    #[effectful]
+    fn g(y: i32) -> i32 {
+        // Add 10
+        let _: () = perform!(State::Set(y + 10));
+        perform!(State::Get)
+    }
+    
+    // Test left associativity: (m >>= f) >>= g
+    // This first binds m with f, then binds the result with g
+    let left = m().bind(f).bind(g);
+    
+    // Test right associativity: m >>= (λx -> f(x) >>= g)
+    // This binds m with a lambda that itself does the binding of f and g
+    let right = m().bind(|x| f(x).bind(g));
+    
+    // These are DIFFERENT expressions with different parenthesizations!
+    // Left:  ((m >>= f) >>= g) - bind happens in sequence
+    // Right: (m >>= (λx -> f(x) >>= g)) - inner bind is inside the lambda
+    
+    // Run both with fresh handlers
+    let left_result = left
+        .handle(StateHandler::new(0))
+        .run_checked()
+        .unwrap();
+        
+    let right_result = right
         .handle(StateHandler::new(0))
         .run_checked()
         .unwrap();
     
-    assert_eq!(r1, r2);
-    assert_eq!(r1, 20); // (5 * 2) + 10 = 20
+    // Both should give the same result
+    assert_eq!(left_result, right_result);
+    assert_eq!(left_result, 20); // (5 * 2) + 10 = 20
+    
+    // EXPLANATION: Why this demonstrates bind associativity
+    // ====================================================
+    //
+    // We've shown that these two ways of grouping bind operations are equivalent:
+    // - Left: (m >>= f) >>= g
+    //   First bind m with f, then bind the result with g
+    // - Right: m >>= (λx -> f(x) >>= g)
+    //   Bind m with a function that itself binds f(x) with g
+    //
+    // Both produce the same result (20), proving bind associativity holds.
 }
 
 /// LAW 5: HANDLER HOMOMORPHISM - STRUCTURE PRESERVATION
