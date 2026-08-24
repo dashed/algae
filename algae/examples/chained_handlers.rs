@@ -4,8 +4,7 @@
 //! - `.handle_all()` followed by `.handle()` calls
 //! - Building up handler chains incrementally
 
-#![feature(coroutines, coroutine_trait, yield_expr)]
-use algae::impl_into_vec_handler;
+#![feature(coroutines, yield_expr)]
 use algae::prelude::*;
 
 // Define our effects
@@ -65,10 +64,8 @@ impl PartialHandler<Op> for LoggerHandler {
     }
 }
 
-// Implement IntoVecHandler for all our handlers
-impl_into_vec_handler!(ConsoleHandler, Op);
-impl_into_vec_handler!(FileHandler, Op);
-impl_into_vec_handler!(LoggerHandler, Op);
+// A `PartialHandler` impl is the only requirement for chaining - the handlers
+// above can be passed straight to `.handle(..)`.
 
 #[effectful]
 fn chained_computation() -> String {
@@ -139,11 +136,13 @@ fn main() {
         }
     }
 
-    // Can mix total handlers using handle_total
+    // Can mix total handlers using handle_total. Handlers are tried in order, so
+    // a total handler appended last acts as a catch-all: it only sees the
+    // operations the earlier partial handlers declined (here, Logger::Info).
     let result = chained_computation()
         .handle_all([ConsoleHandler])
         .handle(FileHandler)
-        .handle_total(TotalHandler) // This will override the previous handlers
+        .handle_total(TotalHandler)
         .run_checked();
 
     match result {

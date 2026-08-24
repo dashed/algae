@@ -27,8 +27,8 @@
 //!
 //! ## Quick Start
 //!
-//! ```rust,ignore
-//! #![feature(coroutines, coroutine_trait, yield_expr)]
+//! ```
+//! #![feature(coroutines, yield_expr)]
 //! use algae::prelude::*;
 //!
 //! // Define your effects
@@ -42,27 +42,29 @@
 //! fn greet_user() -> String {
 //!     let _: () = perform!(Console::Print("What's your name?".to_string()));
 //!     let name: String = perform!(Console::ReadLine);
-//!     format!("Hello, {}!", name)
+//!     format!("Hello, {name}!")
 //! }
 //!
 //! // Implement handlers
 //! struct MockConsole {
 //!     responses: Vec<String>,
-//!     index: std::cell::RefCell<usize>,
+//!     index: usize,
 //! }
 //!
 //! impl Handler<Op> for MockConsole {
 //!     fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
 //!         match op {
 //!             Op::Console(Console::Print(msg)) => {
-//!                 println!("[MOCK] {}", msg);
+//!                 println!("[MOCK] {msg}");
 //!                 Box::new(())
 //!             }
 //!             Op::Console(Console::ReadLine) => {
-//!                 let mut index = self.index.borrow_mut();
-//!                 let response = self.responses.get(*index).cloned()
+//!                 let response = self
+//!                     .responses
+//!                     .get(self.index)
+//!                     .cloned()
 //!                     .unwrap_or_else(|| "default".to_string());
-//!                 *index += 1;
+//!                 self.index += 1;
 //!                 Box::new(response)
 //!             }
 //!         }
@@ -72,7 +74,7 @@
 //! // Run with handler
 //! let handler = MockConsole {
 //!     responses: vec!["Alice".to_string()],
-//!     index: std::cell::RefCell::new(0),
+//!     index: 0,
 //! };
 //! let result = greet_user().handle(handler).run();
 //! assert_eq!(result, "Hello, Alice!");
@@ -83,7 +85,8 @@
 //! - **Type-safe effects**: Effects are statically typed and checked at compile time
 //! - **Composable handlers**: Multiple effect families can be handled by a single handler
 //! - **Testable**: Effects can be easily mocked for testing
-//! - **Zero-cost abstractions**: Minimal runtime overhead
+//! - **Low-cost abstractions**: Each performed effect costs one boxed reply allocation
+//!   and a dynamic dispatch through the handler; nothing else is allocated per effect
 //! - **Rust coroutines**: Built on Rust's native coroutine support
 
 #![feature(coroutines, coroutine_trait)]
@@ -92,7 +95,7 @@ use std::{
     collections::HashMap,
     ops::{Coroutine, CoroutineState},
     pin::Pin,
-    sync::{Mutex, OnceLock},
+    sync::{Mutex, OnceLock, PoisonError},
 };
 
 /// An effect operation request paired with a slot for the handler's reply.
@@ -124,8 +127,7 @@ use std::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// # #![feature(coroutines, coroutine_trait, yield_expr)]
+/// ```
 /// # use algae::prelude::*;
 /// # effect! { Test::GetValue -> i32; }
 /// // Effects are typically created by the perform! macro and handled automatically
@@ -172,13 +174,13 @@ struct Stored {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// # #![feature(coroutines, coroutine_trait, yield_expr)]
+/// ```
+/// # #![feature(coroutines, yield_expr)]
 /// # use algae::prelude::*;
 /// # effect! { Test::GetValue -> i32; }
 /// # struct TestHandler;
 /// # impl Handler<Op> for TestHandler {
-/// #     fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
+/// #     fn handle(&mut self, _op: &Op) -> Box<dyn std::any::Any + Send> {
 /// #         Box::new(42i32)
 /// #     }
 /// # }
@@ -285,22 +287,39 @@ fn common_type_names() -> HashMap<TypeId, &'static str> {
 ///
 /// ## Example
 ///
-/// ```rust,ignore
-/// # struct MyDomainType;
-/// // Before registration: error shows "<unknown type with TypeId ...>"
-/// algae::register_type::<MyDomainType>();
-/// // After registration: error shows "MyDomainType"
+/// ```
+/// # use algae::prelude::*;
+/// # effect! { Test::GetValue -> i32; }
+/// #[derive(Debug)]
+/// struct MyDomainType;
 ///
-/// // You can also register generic types
+/// # fn mismatch_message(value: MyDomainType) -> String {
+/// #     let mut effect = Effect::new(Test::GetValue);
+/// #     effect.fill_boxed(Box::new(value));
+/// #     match effect.get_reply().try_take::<i32>() {
+/// #         Err(ReplyError::WrongType { actual, .. }) => actual,
+/// #         other => panic!("expected a type mismatch, got {other:?}"),
+/// #     }
+/// # }
+/// // Before registration: the mismatch message can only name the TypeId
+/// assert!(mismatch_message(MyDomainType).contains("unknown type with TypeId"));
+///
+/// algae::register_type::<MyDomainType>();
+///
+/// // After registration: the message names the type
+/// assert!(mismatch_message(MyDomainType).contains("MyDomainType"));
+///
+/// // Generic instantiations are registered the same way, one at a time
 /// algae::register_type::<Vec<MyDomainType>>();
 /// algae::register_type::<Option<MyDomainType>>();
 /// ```
 pub fn register_type<T: Any + 'static>() {
     let type_names = TYPE_NAMES.get_or_init(|| Mutex::new(common_type_names()));
 
-    if let Ok(mut map) = type_names.lock() {
-        map.insert(TypeId::of::<T>(), std::any::type_name::<T>());
-    }
+    // The registry is a plain name lookup, so a poisoned mutex carries no broken
+    // invariant: recover the map instead of silently dropping the registration.
+    let mut map = type_names.lock().unwrap_or_else(PoisonError::into_inner);
+    map.insert(TypeId::of::<T>(), std::any::type_name::<T>());
 }
 
 /// Look up a type name from the registry (cold path for error handling).
@@ -310,13 +329,12 @@ fn lookup_type_name(id: TypeId) -> String {
     // Ensure the registry is initialized
     let type_names = TYPE_NAMES.get_or_init(|| Mutex::new(common_type_names()));
 
-    if let Ok(map) = type_names.lock() {
-        map.get(&id)
-            .map(|&s| s.to_string())
-            .unwrap_or_else(|| format!("<unknown type with TypeId {id:?}>"))
-    } else {
-        format!("<unknown type with TypeId {id:?}>")
-    }
+    // Recover from poisoning so a panic elsewhere cannot degrade every later
+    // error message to `<unknown type ...>`.
+    let map = type_names.lock().unwrap_or_else(PoisonError::into_inner);
+    map.get(&id)
+        .map(|&s| s.to_string())
+        .unwrap_or_else(|| format!("<unknown type with TypeId {id:?}>"))
 }
 
 impl<Op> Effect<Op> {
@@ -335,12 +353,12 @@ impl<Op> Effect<Op> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// ```
     /// # use algae::prelude::*;
     /// # effect! { Test::GetValue -> i32; }
     /// let effect = Effect::new(Test::GetValue);
     /// // Effect is now ready to be handled
+    /// assert!(matches!(effect.op, Test::GetValue));
     /// ```
     pub fn new(op: Op) -> Self {
         Self { op, reply: None }
@@ -368,13 +386,23 @@ impl<Op> Effect<Op> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// ```
     /// # use algae::prelude::*;
     /// # effect! { Test::GetValue -> i32; }
     /// let mut effect = Effect::new(Test::GetValue);
     /// effect.fill_boxed(Box::new(42i32));
     /// // Effect now contains the reply value
+    /// assert_eq!(effect.get_reply().take::<i32>(), 42);
+    /// ```
+    ///
+    /// Filling twice panics, which is how the one-shot invariant is enforced:
+    ///
+    /// ```should_panic
+    /// # use algae::prelude::*;
+    /// # effect! { Test::GetValue -> i32; }
+    /// let mut effect = Effect::new(Test::GetValue);
+    /// effect.fill_boxed(Box::new(42i32));
+    /// effect.fill_boxed(Box::new(24i32)); // panics: reply filled twice
     /// ```
     pub fn fill_boxed(&mut self, r: Box<dyn Any + Send>) {
         assert!(self.reply.is_none(), "reply filled twice");
@@ -405,8 +433,7 @@ impl<Op> Effect<Op> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// ```
     /// # use algae::prelude::*;
     /// # effect! { Test::GetValue -> i32; }
     /// let mut effect = Effect::new(Test::GetValue);
@@ -445,14 +472,20 @@ impl Reply {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// ```
     /// # use algae::prelude::*;
     /// # effect! { Test::GetValue -> i32; }
+    /// # let mut effect = Effect::new(Test::GetValue);
+    /// # effect.fill_boxed(Box::new(42i32));
+    /// # let mut reply = effect.get_reply();
     /// match reply.try_take::<i32>() {
-    ///     Ok(value) => println!("Got value: {}", value),
-    ///     Err(e) => eprintln!("Error: {}", e),
+    ///     Ok(value) => println!("Got value: {value}"),
+    ///     Err(e) => eprintln!("Error: {e}"),
     /// }
+    ///
+    /// // The reply is one-shot, so a second extraction reports what happened
+    /// // instead of panicking.
+    /// assert_eq!(reply.try_take::<i32>(), Err(ReplyError::AlreadyTaken));
     /// ```
     pub fn try_take<R: Any + Send + 'static>(&mut self) -> Result<R, ReplyError> {
         // 1. Fast-path: is there still a value?
@@ -503,13 +536,13 @@ impl Reply {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// ```
+    /// # #![feature(coroutines, yield_expr)]
     /// # use algae::prelude::*;
     /// # effect! { Test::GetValue -> i32; }
     /// # struct TestHandler;
     /// # impl Handler<Op> for TestHandler {
-    /// #     fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
+    /// #     fn handle(&mut self, _op: &Op) -> Box<dyn std::any::Any + Send> {
     /// #         Box::new(42i32)
     /// #     }
     /// # }
@@ -521,6 +554,18 @@ impl Reply {
     /// }
     /// let result = example().handle(TestHandler).run();
     /// assert_eq!(result, 42);
+    /// ```
+    ///
+    /// Taking the wrong type panics with both type names:
+    ///
+    /// ```should_panic
+    /// # use algae::prelude::*;
+    /// # effect! { Test::GetValue -> i32; }
+    /// # let mut effect = Effect::new(Test::GetValue);
+    /// # effect.fill_boxed(Box::new(42i32));
+    /// # let reply = effect.get_reply();
+    /// // panics: expected `alloc::string::String`, but reply contains `i32`
+    /// let _: String = reply.take();
     /// ```
     pub fn take<R: Any + Send + 'static>(mut self) -> R {
         match self.try_take() {
@@ -561,8 +606,8 @@ type EffectCoroutine<R, Op> =
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// # #![feature(coroutines, coroutine_trait, yield_expr)]
+/// ```
+/// # #![feature(coroutines, yield_expr)]
 /// # use algae::prelude::*;
 /// # effect! { Test::GetValue -> i32; }
 /// # struct TestHandler;
@@ -608,22 +653,38 @@ impl<R, Op: 'static> Effectful<R, Op> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// ```
+    /// # #![feature(coroutines, yield_expr)]
     /// # use algae::prelude::*;
     /// # effect! { State::Get -> i32; State::Set (i32) -> (); }
+    /// # struct StateHandler { value: i32 }
+    /// # impl Handler<Op> for StateHandler {
+    /// #     fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
+    /// #         match op {
+    /// #             Op::State(State::Get) => Box::new(self.value),
+    /// #             Op::State(State::Set(v)) => {
+    /// #                 self.value = *v;
+    /// #                 Box::new(())
+    /// #             }
+    /// #         }
+    /// #     }
+    /// # }
     /// #[effectful]
     /// fn get_value() -> i32 {
     ///     perform!(State::Get)
     /// }
     ///
     /// #[effectful]
-    /// fn set_doubled(x: i32) -> () {
-    ///     perform!(State::Set(x * 2))
+    /// fn set_doubled(x: i32) -> i32 {
+    ///     let _: () = perform!(State::Set(x * 2));
+    ///     perform!(State::Get)
     /// }
     ///
-    /// // Using bind to sequence computations
-    /// let computation = get_value().bind(|x| set_doubled(x));
+    /// // Using bind to sequence computations. Both halves yield their effects to
+    /// // the same handler, so the write in `set_doubled` is visible to its read.
+    /// let computation = get_value().bind(set_doubled);
+    ///
+    /// assert_eq!(computation.handle(StateHandler { value: 21 }).run(), 42);
     /// ```
     pub fn bind<S, F>(self, f: F) -> Effectful<S, Op>
     where
@@ -687,14 +748,20 @@ impl<R, Op: 'static> Effectful<R, Op> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// # #![feature(coroutines, coroutine_trait, yield_expr, stmt_expr_attributes)]
+    /// ```
+    /// # #![feature(coroutines, yield_expr, stmt_expr_attributes)]
     /// # use algae::prelude::*;
-    /// # use std::pin::Pin;
     /// # effect! { Test::GetValue -> i32; }
+    /// # struct TestHandler;
+    /// # impl Handler<Op> for TestHandler {
+    /// #     fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
+    /// #         match op { Op::Test(Test::GetValue) => Box::new(42i32) }
+    /// #     }
+    /// # }
     /// // This is typically done by the #[effectful] macro
-    /// let coroutine = #[coroutine] |_: Option<Reply>| {
-    ///     let effect = Effect::new(Test::GetValue);
+    /// let coroutine = #[coroutine]
+    /// |_: Option<Reply>| {
+    ///     let effect = Effect::new(Op::Test(Test::GetValue));
     ///     let reply = yield effect;
     ///     let value: i32 = reply.unwrap().take();
     ///     value
@@ -702,6 +769,7 @@ impl<R, Op: 'static> Effectful<R, Op> {
     ///
     /// let effectful = Effectful::new(coroutine);
     /// // Now ready to be run with a handler
+    /// assert_eq!(effectful.handle(TestHandler).run(), 42);
     /// ```
     pub fn new<G>(g: G) -> Self
     where
@@ -726,8 +794,8 @@ impl<R, Op: 'static> Effectful<R, Op> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// ```
+    /// # #![feature(coroutines, yield_expr)]
     /// # use algae::prelude::*;
     /// # effect! { Test::GetValue -> i32; }
     /// # struct TestHandler;
@@ -786,8 +854,8 @@ impl<R, Op: 'static> Effectful<R, Op> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// ```
+    /// # #![feature(coroutines, yield_expr)]
     /// # use algae::prelude::*;
     /// # effect! { Test::GetValue -> i32; }
     /// # struct TestHandler;
@@ -821,8 +889,8 @@ impl<R, Op: 'static> Effectful<R, Op> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// ```
+    /// # #![feature(coroutines, yield_expr)]
     /// # use algae::prelude::*;
     /// # effect! {
     /// #     Console::Print (String) -> ();
@@ -830,14 +898,41 @@ impl<R, Op: 'static> Effectful<R, Op> {
     /// #     Logger::Info (String) -> ();
     /// # }
     /// # struct ConsoleHandler;
+    /// # impl PartialHandler<Op> for ConsoleHandler {
+    /// #     fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+    /// #         match op {
+    /// #             Op::Console(Console::Print(msg)) => {
+    /// #                 println!("{msg}");
+    /// #                 Some(Box::new(()))
+    /// #             }
+    /// #             _ => None,
+    /// #         }
+    /// #     }
+    /// # }
     /// # struct FileHandler;
+    /// # impl PartialHandler<Op> for FileHandler {
+    /// #     fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+    /// #         match op {
+    /// #             Op::File(File::Read(_)) => Some(Box::new("file contents".to_string())),
+    /// #             _ => None,
+    /// #         }
+    /// #     }
+    /// # }
     /// # struct LoggerHandler;
-    /// # impl PartialHandler<Op> for ConsoleHandler { /* ... */ }
-    /// # impl PartialHandler<Op> for FileHandler { /* ... */ }
-    /// # impl PartialHandler<Op> for LoggerHandler { /* ... */ }
+    /// # impl PartialHandler<Op> for LoggerHandler {
+    /// #     fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+    /// #         match op {
+    /// #             Op::Logger(Logger::Info(_)) => Some(Box::new(())),
+    /// #             _ => None,
+    /// #         }
+    /// #     }
+    /// # }
     /// #[effectful]
     /// fn computation() -> String {
-    ///     // ... effectful operations ...
+    ///     let _: () = perform!(Logger::Info("reading".to_string()));
+    ///     let contents: String = perform!(File::Read("data.txt".to_string()));
+    ///     let _: () = perform!(Console::Print(contents.clone()));
+    ///     contents
     /// }
     ///
     /// let result = computation()
@@ -845,7 +940,9 @@ impl<R, Op: 'static> Effectful<R, Op> {
     ///     .handle(ConsoleHandler)
     ///     .handle(FileHandler)
     ///     .handle(LoggerHandler)
-    ///     .run_checked()?;
+    ///     .run_checked();
+    ///
+    /// assert_eq!(result, Ok("file contents".to_string()));
     /// ```
     pub fn begin_chain(self) -> Handled<R, Op, VecHandler<Op>>
     where
@@ -874,8 +971,8 @@ impl<R, Op: 'static> Effectful<R, Op> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// ```
+    /// # #![feature(coroutines, yield_expr)]
     /// # use algae::prelude::*;
     /// # effect! {
     /// #     Math::Add ((i32, i32)) -> i32;
@@ -898,8 +995,8 @@ impl<R, Op: 'static> Effectful<R, Op> {
     /// }
     ///
     /// match computation().run_checked(MathOnlyHandler) {
-    ///     Ok(result) => println!("Result: {}", result),
-    ///     Err(UnhandledOp(op)) => eprintln!("Unhandled: {:?}", op),
+    ///     Ok(result) => panic!("the logging effect should not have been handled: {result}"),
+    ///     Err(UnhandledOp(op)) => assert!(matches!(op, Op::Logger(Logger::Info(_)))),
     /// }
     /// ```
     pub fn run_checked<H>(mut self, mut h: H) -> Result<R, UnhandledOp<Op>>
@@ -937,8 +1034,8 @@ impl<R, Op: 'static> Effectful<R, Op> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// ```
+    /// # #![feature(coroutines, yield_expr)]
     /// # use algae::prelude::*;
     /// # effect! { Math::Add ((i32, i32)) -> i32; }
     /// struct MathHandler;
@@ -981,32 +1078,40 @@ impl<R, Op: 'static> Effectful<R, Op> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// ```
+    /// # #![feature(coroutines, yield_expr)]
     /// # use algae::prelude::*;
     /// # effect! {
     /// #     Math::Add ((i32, i32)) -> i32;
     /// #     Logger::Info (String) -> ();
     /// #     File::Read (String) -> String;
     /// # }
-    /// # struct MathHandler;
-    /// # struct LoggerHandler;
-    /// # struct FileHandler;
-    /// # impl PartialHandler<Op> for MathHandler { /* ... */ }
-    /// # impl PartialHandler<Op> for LoggerHandler { /* ... */ }
-    /// # impl PartialHandler<Op> for FileHandler { /* ... */ }
+    /// // `handle_all` takes one iterator, so the handlers share a single type here;
+    /// // box them as `Box<dyn PartialHandler<Op> + Send>` to mix distinct types.
+    /// struct SubsystemHandler;
+    /// impl PartialHandler<Op> for SubsystemHandler {
+    ///     fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+    ///         match op {
+    ///             Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
+    ///             Op::Logger(Logger::Info(_)) => Some(Box::new(())),
+    ///             Op::File(File::Read(_)) => Some(Box::new("hello".to_string())),
+    ///         }
+    ///     }
+    /// }
     ///
     /// #[effectful]
     /// fn complex_computation() -> String {
     ///     let _: () = perform!(Logger::Info("Starting computation".to_string()));
     ///     let sum: i32 = perform!(Math::Add((5, 3)));
     ///     let content: String = perform!(File::Read("data.txt".to_string()));
-    ///     format!("Sum: {}, Content: {}", sum, content)
+    ///     format!("Sum: {sum}, Content: {content}")
     /// }
     ///
     /// let result = complex_computation()
-    ///     .handle_all([MathHandler, LoggerHandler, FileHandler])
-    ///     .run_checked()?;
+    ///     .handle_all([SubsystemHandler])
+    ///     .run_checked();
+    ///
+    /// assert_eq!(result, Ok("Sum: 8, Content: hello".to_string()));
     /// ```
     pub fn handle_all<I, H>(self, iter: I) -> Handled<R, Op, VecHandler<Op>>
     where
@@ -1036,8 +1141,8 @@ impl<R, Op: 'static> Effectful<R, Op> {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// # #![feature(coroutines, coroutine_trait, yield_expr)]
+/// ```
+/// # #![feature(coroutines, yield_expr)]
 /// # use algae::prelude::*;
 /// # effect! { Test::GetValue -> i32; }
 /// # struct TestHandler;
@@ -1052,7 +1157,7 @@ impl<R, Op: 'static> Effectful<R, Op> {
 /// }
 ///
 /// // .handle() returns a Handled<i32, Op, TestHandler>
-/// let handled = computation().handle(TestHandler);
+/// let handled: algae::Handled<i32, Op, TestHandler> = computation().handle(TestHandler);
 /// let result = handled.run(); // Execute the computation
 /// assert_eq!(result, 42);
 /// ```
@@ -1082,8 +1187,8 @@ impl<R, Op: 'static, H: Handler<Op>> Handled<R, Op, H> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// ```
+    /// # #![feature(coroutines, yield_expr)]
     /// # use algae::prelude::*;
     /// # effect! { Test::GetValue -> i32; }
     /// # struct TestHandler;
@@ -1123,29 +1228,43 @@ where
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// ```
+    /// # #![feature(coroutines, yield_expr)]
     /// # use algae::prelude::*;
     /// # effect! {
     /// #     Math::Add ((i32, i32)) -> i32;
     /// #     Logger::Info (String) -> ();
     /// # }
     /// # struct MathHandler;
+    /// # impl PartialHandler<Op> for MathHandler {
+    /// #     fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+    /// #         match op {
+    /// #             Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
+    /// #             _ => None,
+    /// #         }
+    /// #     }
+    /// # }
     /// # struct LoggerHandler;
-    /// # impl PartialHandler<Op> for MathHandler { /* ... */ }
-    /// # impl PartialHandler<Op> for LoggerHandler { /* ... */ }
-    ///
+    /// # impl PartialHandler<Op> for LoggerHandler {
+    /// #     fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+    /// #         match op {
+    /// #             Op::Logger(Logger::Info(_)) => Some(Box::new(())),
+    /// #             _ => None,
+    /// #         }
+    /// #     }
+    /// # }
     /// #[effectful]
     /// fn computation() -> i32 {
     ///     let _: () = perform!(Logger::Info("Computing...".to_string()));
     ///     perform!(Math::Add((2, 3)))
     /// }
     ///
-    /// match computation()
-    ///     .handle_all([MathHandler, LoggerHandler])
-    ///     .run_checked() {
-    ///     Ok(result) => println!("Result: {}", result),
-    ///     Err(UnhandledOp(op)) => eprintln!("Unhandled: {:?}", op),
+    /// let handlers: Vec<Box<dyn PartialHandler<Op> + Send>> =
+    ///     vec![Box::new(MathHandler), Box::new(LoggerHandler)];
+    ///
+    /// match computation().handle_all(handlers).run_checked() {
+    ///     Ok(result) => assert_eq!(result, 5),
+    ///     Err(UnhandledOp(op)) => panic!("unhandled: {op:?}"),
     /// }
     /// ```
     pub fn run_checked(self) -> Result<R, UnhandledOp<Op>> {
@@ -1169,8 +1288,8 @@ where
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// # #![feature(coroutines, coroutine_trait, yield_expr)]
+/// ```
+/// # #![feature(coroutines, yield_expr)]
 /// # use algae::prelude::*;
 /// # effect! {
 /// #     File::Read (String) -> String;
@@ -1188,7 +1307,7 @@ where
 ///             Op::File(File::Read(filename)) => {
 ///                 let content = self.files.get(filename)
 ///                     .cloned()
-///                     .unwrap_or_else(|| "".to_string());
+///                     .unwrap_or_default();
 ///                 Box::new(content)
 ///             }
 ///             Op::File(File::Write((filename, content))) => {
@@ -1198,6 +1317,14 @@ where
 ///         }
 ///     }
 /// }
+///
+/// # #[effectful]
+/// # fn round_trip() -> String {
+/// #     let _: () = perform!(File::Write(("a.txt".to_string(), "hi".to_string())));
+/// #     perform!(File::Read("a.txt".to_string()))
+/// # }
+/// let handler = FileHandler { files: HashMap::new() };
+/// assert_eq!(round_trip().handle(handler).run(), "hi");
 /// ```
 ///
 /// # Thread Safety
@@ -1231,8 +1358,7 @@ pub trait Handler<Op> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// # #![feature(coroutines, coroutine_trait, yield_expr)]
+    /// ```
     /// # use algae::prelude::*;
     /// # effect! { Math::Add ((i32, i32)) -> i32; }
     /// struct MathHandler;
@@ -1246,6 +1372,10 @@ pub trait Handler<Op> {
     ///         }
     ///     }
     /// }
+    ///
+    /// let mut handler = MathHandler;
+    /// let reply = handler.handle(&Op::Math(Math::Add((2, 3))));
+    /// assert_eq!(*reply.downcast::<i32>().unwrap(), 5);
     /// ```
     fn handle(&mut self, op: &Op) -> Box<dyn Any + Send>;
 }
@@ -1261,8 +1391,7 @@ pub trait Handler<Op> {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// # #![feature(coroutines, coroutine_trait, yield_expr)]
+/// ```
 /// # use algae::prelude::*;
 /// # effect! {
 /// #     Math::Add ((i32, i32)) -> i32;
@@ -1278,6 +1407,12 @@ pub trait Handler<Op> {
 ///         }
 ///     }
 /// }
+///
+/// let mut handler = MathOnlyHandler;
+/// assert!(handler.maybe_handle(&Op::Math(Math::Add((2, 3)))).is_some());
+/// assert!(handler
+///     .maybe_handle(&Op::Logger(Logger::Info("hi".to_string())))
+///     .is_none());
 /// ```
 pub trait PartialHandler<Op> {
     /// Attempts to process an operation, returning `Some` if handled or `None` if declined.
@@ -1311,13 +1446,42 @@ impl<Op> PartialHandler<Op> for Box<dyn PartialHandler<Op> + Send> {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// # #![feature(coroutines, coroutine_trait, yield_expr)]
+/// ```
+/// # #![feature(coroutines, yield_expr)]
 /// # use algae::prelude::*;
+/// # effect! {
+/// #     Math::Add ((i32, i32)) -> i32;
+/// #     Logger::Info (String) -> ();
+/// # }
+/// # struct MathHandler;
+/// # impl PartialHandler<Op> for MathHandler {
+/// #     fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+/// #         match op {
+/// #             Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
+/// #             _ => None,
+/// #         }
+/// #     }
+/// # }
+/// # struct LoggerHandler;
+/// # impl PartialHandler<Op> for LoggerHandler {
+/// #     fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+/// #         match op {
+/// #             Op::Logger(Logger::Info(_)) => Some(Box::new(())),
+/// #             _ => None,
+/// #         }
+/// #     }
+/// # }
+/// # #[effectful]
+/// # fn computation() -> i32 {
+/// #     let _: () = perform!(Logger::Info("adding".to_string()));
+/// #     perform!(Math::Add((2, 3)))
+/// # }
 /// let mut vec_handler = VecHandler::<Op>::new();
 /// vec_handler.push(MathHandler);
 /// vec_handler.push(LoggerHandler);
-/// vec_handler.push(FileHandler);
+///
+/// // Prefer run_checked: a VecHandler covers only what its handlers accept.
+/// assert_eq!(computation().run_checked(vec_handler), Ok(5));
 /// ```
 pub struct VecHandler<Op> {
     inner: Vec<Box<dyn PartialHandler<Op> + Send>>,
@@ -1372,7 +1536,37 @@ impl<Op> PartialHandler<Op> for VecHandler<Op> {
     }
 }
 
-/// Handler implementation for VecHandler that returns Result instead of panicking
+/// Total-handler view of a `VecHandler` that **panics** on an unhandled operation.
+///
+/// This impl exists so a `VecHandler` can be used everywhere a `Handler<Op>` is
+/// expected — notably `Effectful::run_with` and `Handled::run`. Because the
+/// `Handler` trait has no way to signal "declined", an operation that every
+/// contained handler declines can only abort the program.
+///
+/// # ⚠️ Warning: `.run()` on a `VecHandler` panics on unhandled operations
+///
+/// A `VecHandler` is a *partial* handler by nature — it is built by pushing
+/// handlers that each cover a slice of the operation space, and nothing checks
+/// that the slices add up to the whole. Calling `.run()` (or `run_with`) on one
+/// therefore turns a routine composition mistake into a panic:
+///
+/// ```text
+/// thread 'main' panicked at: Unhandled operation: Logger(Info("hello"))
+/// ```
+///
+/// **Use `.run_checked()` instead.** It returns
+/// `Result<R, UnhandledOp<Op>>`, handing you the offending operation so you can
+/// report it, fall back to another handler, or propagate it with `?`:
+///
+/// ```text
+/// match computation().handle_all(handlers).run_checked() {
+///     Ok(value) => ...,
+///     Err(unhandled) => ...,   // carries the operation nobody handled
+/// }
+/// ```
+///
+/// Reach for `.run()` only when the chain is a *total* cover by construction —
+/// for example when it ends in a catch-all handler.
 impl<Op> Handler<Op> for VecHandler<Op>
 where
     Op: std::fmt::Debug + 'static,
@@ -1400,107 +1594,107 @@ where
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// # #![feature(coroutines, coroutine_trait, yield_expr)]
+/// ```
+/// # #![feature(coroutines, yield_expr)]
 /// # use algae::prelude::*;
-/// match computation.run_checked(handler) {
-///     Ok(result) => println!("Success: {}", result),
-///     Err(UnhandledOp(op)) => eprintln!("Unhandled operation: {:?}", op),
+/// # effect! { Math::Add ((i32, i32)) -> i32; }
+/// # struct DeclineEverything;
+/// # impl PartialHandler<Op> for DeclineEverything {
+/// #     fn maybe_handle(&mut self, _op: &Op) -> Option<Box<dyn std::any::Any + Send>> { None }
+/// # }
+/// # #[effectful]
+/// # fn computation() -> i32 { perform!(Math::Add((2, 3))) }
+/// match computation().run_checked(DeclineEverything) {
+///     Ok(result) => println!("Success: {result}"),
+///     Err(UnhandledOp(op)) => assert_eq!(format!("{op:?}"), "Math(Add((2, 3)))"),
 /// }
+/// ```
+///
+/// `UnhandledOp` also implements `Display` and `std::error::Error` (whenever `Op:
+/// Debug`), so it composes with `?` and with error-reporting crates:
+///
+/// ```
+/// # #![feature(coroutines, yield_expr)]
+/// # use algae::prelude::*;
+/// # effect! { Math::Add ((i32, i32)) -> i32; }
+/// # struct DeclineEverything;
+/// # impl PartialHandler<Op> for DeclineEverything {
+/// #     fn maybe_handle(&mut self, _op: &Op) -> Option<Box<dyn std::any::Any + Send>> { None }
+/// # }
+/// # #[effectful]
+/// # fn computation() -> i32 { perform!(Math::Add((2, 3))) }
+/// fn run() -> Result<i32, Box<dyn std::error::Error>> {
+///     Ok(computation().run_checked(DeclineEverything)?)
+/// }
+///
+/// let message = run().unwrap_err().to_string();
+/// assert_eq!(message, "unhandled effect operation: Math(Add((2, 3)))");
 /// ```
 #[derive(Debug, PartialEq)]
 pub struct UnhandledOp<Op>(pub Op);
 
-/// Error type returned when an effect operation has no handler (operation name only).
+impl<Op: std::fmt::Debug> std::fmt::Display for UnhandledOp<Op> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unhandled effect operation: {:?}", self.0)
+    }
+}
+
+impl<Op: std::fmt::Debug> std::error::Error for UnhandledOp<Op> {}
+
+/// Error type returned when an effect operation has no handler (description only).
 ///
-/// This lighter-weight error type contains only the operation's type name as a string,
-/// useful when you don't need the full operation data.
+/// This is the `'static`-friendly counterpart to [`UnhandledOp`]: instead of owning
+/// the operation itself, it owns a rendering of it. That makes it usable in error
+/// types that must not be generic over `Op`, at the cost of losing the ability to
+/// inspect or recover the operation.
+///
+/// Build one with `From`/`Into` from an [`UnhandledOp`]; the conversion records the
+/// operation's `Debug` output, so the payload of the operation survives as text.
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// # #![feature(coroutines, coroutine_trait, yield_expr)]
-/// # use algae::prelude::*;
-/// match computation.run_checked(handler) {
-///     Ok(result) => println!("Success: {}", result),
-///     Err(err) => eprintln!("Unhandled operation: {}", err.op_name),
-/// }
 /// ```
-#[derive(Debug, PartialEq, Clone)]
+/// # #![feature(coroutines, yield_expr)]
+/// # use algae::prelude::*;
+/// # effect! { Math::Add ((i32, i32)) -> i32; }
+/// # struct DeclineEverything;
+/// # impl PartialHandler<Op> for DeclineEverything {
+/// #     fn maybe_handle(&mut self, _op: &Op) -> Option<Box<dyn std::any::Any + Send>> { None }
+/// # }
+/// # #[effectful]
+/// # fn computation() -> i32 { perform!(Math::Add((2, 3))) }
+/// let err: UnhandledOpError = computation()
+///     .run_checked(DeclineEverything)
+///     .unwrap_err()
+///     .into();
+///
+/// assert_eq!(err.op_name, "Math(Add((2, 3)))");
+/// assert_eq!(err.to_string(), "unhandled effect operation: Math(Add((2, 3)))");
+/// ```
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct UnhandledOpError {
-    /// The name of the unhandled operation type
-    pub op_name: &'static str,
+    /// The unhandled operation as rendered by its `Debug` implementation at the
+    /// moment of conversion (for example `Math(Add((2, 3)))`).
+    pub op_name: String,
 }
+
+impl std::fmt::Display for UnhandledOpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unhandled effect operation: {}", self.op_name)
+    }
+}
+
+impl std::error::Error for UnhandledOpError {}
 
 impl<Op: std::fmt::Debug> From<UnhandledOp<Op>> for UnhandledOpError {
     fn from(unhandled: UnhandledOp<Op>) -> Self {
-        // Get the debug representation and extract the type name
-        let _debug_str = format!("{:?}", unhandled.0);
-        // This is a simple heuristic - in practice you might want something more sophisticated
         UnhandledOpError {
-            op_name: "UnknownOp", // We'll use a static string for simplicity
+            op_name: format!("{:?}", unhandled.0),
         }
     }
 }
 
-/// Trait to enable conversion from Handler to PartialHandler
-pub trait IntoPartialHandler<Op> {
-    /// The resulting partial handler type
-    type Output: PartialHandler<Op> + Send + 'static;
-
-    /// Convert to a partial handler
-    fn into_partial_handler(self) -> Self::Output;
-}
-
-// Implementation for types that already implement PartialHandler
-impl<Op, H> IntoPartialHandler<Op> for H
-where
-    H: PartialHandler<Op> + Send + 'static,
-{
-    type Output = H;
-
-    fn into_partial_handler(self) -> Self::Output {
-        self
-    }
-}
-
-/// Trait for converting any handler into a VecHandler for flattening
-pub trait IntoVecHandler<Op> {
-    /// Convert this handler into a VecHandler
-    fn into_vec_handler(self) -> VecHandler<Op>;
-}
-
-// Implementation for VecHandler - return as-is (already flat)
-impl<Op> IntoVecHandler<Op> for VecHandler<Op> {
-    fn into_vec_handler(self) -> VecHandler<Op> {
-        self
-    }
-}
-
-// Implementation for Box<dyn PartialHandler> - wrap in VecHandler
-impl<Op> IntoVecHandler<Op> for Box<dyn PartialHandler<Op> + Send> {
-    fn into_vec_handler(self) -> VecHandler<Op> {
-        let mut vec = VecHandler::new();
-        vec.inner.push(self);
-        vec
-    }
-}
-
-/// Macro to implement IntoVecHandler for a type that implements PartialHandler
-#[macro_export]
-macro_rules! impl_into_vec_handler {
-    ($handler:ty, $op:ty) => {
-        impl $crate::IntoVecHandler<$op> for $handler {
-            fn into_vec_handler(self) -> $crate::VecHandler<$op> {
-                let mut vec = $crate::VecHandler::new();
-                vec.push(self);
-                vec
-            }
-        }
-    };
-}
-
-/// Wrapper to make Handler trait implement PartialHandler  
+/// Wrapper to make Handler trait implement PartialHandler
 pub struct HandlerWrapper<Op, H> {
     handler: H,
     _phantom: std::marker::PhantomData<Op>,
@@ -1526,22 +1720,116 @@ where
 
 // Special case for VecHandler to enable efficient chaining
 impl<R, Op: 'static + Send> Handled<R, Op, VecHandler<Op>> {
-    /// Adds another handler to an existing VecHandler chain.
+    /// Appends another partial handler to this chain.
     ///
-    /// This specialized implementation efficiently adds to an existing VecHandler
-    /// without creating a new one. If the added handler is itself a VecHandler,
-    /// its contents are flattened into the existing collection.
-    pub fn handle<H2>(self, h2: H2) -> Handled<R, Op, VecHandler<Op>>
+    /// Any `PartialHandler<Op>` can be appended directly — no conversion trait or
+    /// boilerplate impl is required — which is what makes
+    /// `.begin_chain().handle(A).handle(B)` read the way it does. Handlers are
+    /// tried in the order they were appended.
+    ///
+    /// Passing a [`VecHandler`] here nests it as a single boxed handler. That is
+    /// behaviorally identical to flattening (the same handlers are tried in the
+    /// same order); use [`merge`](Self::merge) when you specifically want the
+    /// handlers spliced into this chain instead of nested.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #![feature(coroutines, yield_expr)]
+    /// # use algae::prelude::*;
+    /// # effect! {
+    /// #     Math::Add ((i32, i32)) -> i32;
+    /// #     Logger::Info (String) -> ();
+    /// # }
+    /// # struct MathHandler;
+    /// # impl PartialHandler<Op> for MathHandler {
+    /// #     fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+    /// #         match op {
+    /// #             Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
+    /// #             _ => None,
+    /// #         }
+    /// #     }
+    /// # }
+    /// # struct LoggerHandler;
+    /// # impl PartialHandler<Op> for LoggerHandler {
+    /// #     fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+    /// #         match op {
+    /// #             Op::Logger(Logger::Info(_)) => Some(Box::new(())),
+    /// #             _ => None,
+    /// #         }
+    /// #     }
+    /// # }
+    /// #[effectful]
+    /// fn computation() -> i32 {
+    ///     let _: () = perform!(Logger::Info("adding".to_string()));
+    ///     perform!(Math::Add((2, 3)))
+    /// }
+    ///
+    /// let result = computation()
+    ///     .begin_chain()
+    ///     .handle(MathHandler)
+    ///     .handle(LoggerHandler)
+    ///     .run_checked();
+    ///
+    /// assert_eq!(result, Ok(5));
+    /// ```
+    pub fn handle<H2>(mut self, h2: H2) -> Handled<R, Op, VecHandler<Op>>
     where
-        H2: IntoVecHandler<Op>,
+        H2: PartialHandler<Op> + Send + 'static,
     {
-        let mut result = self.h;
-        let other = h2.into_vec_handler();
-        result.extend_from(other);
-        Handled {
-            eff: self.eff,
-            h: result,
-        }
+        self.h.push(h2);
+        self
+    }
+
+    /// Splices every handler from `other` into this chain, in order.
+    ///
+    /// This is the flattening counterpart to [`handle`](Self::handle): where
+    /// `handle(vec)` would nest `vec` as one handler, `merge(vec)` appends its
+    /// handlers individually, leaving a single flat collection.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #![feature(coroutines, yield_expr)]
+    /// # use algae::prelude::*;
+    /// # effect! {
+    /// #     Math::Add ((i32, i32)) -> i32;
+    /// #     Math::Multiply ((i32, i32)) -> i32;
+    /// # }
+    /// # struct AddHandler;
+    /// # impl PartialHandler<Op> for AddHandler {
+    /// #     fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+    /// #         match op {
+    /// #             Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
+    /// #             _ => None,
+    /// #         }
+    /// #     }
+    /// # }
+    /// # struct MultiplyHandler;
+    /// # impl PartialHandler<Op> for MultiplyHandler {
+    /// #     fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn std::any::Any + Send>> {
+    /// #         match op {
+    /// #             Op::Math(Math::Multiply((a, b))) => Some(Box::new(a * b)),
+    /// #             _ => None,
+    /// #         }
+    /// #     }
+    /// # }
+    /// # #[effectful]
+    /// # fn computation() -> i32 {
+    /// #     let sum: i32 = perform!(Math::Add((10, 20)));
+    /// #     perform!(Math::Multiply((sum, 2)))
+    /// # }
+    /// let mut arithmetic = VecHandler::new();
+    /// arithmetic.push(AddHandler);
+    /// arithmetic.push(MultiplyHandler);
+    ///
+    /// let result = computation().begin_chain().merge(arithmetic).run_checked();
+    ///
+    /// assert_eq!(result, Ok(60));
+    /// ```
+    pub fn merge(mut self, other: VecHandler<Op>) -> Self {
+        self.h.extend_from(other);
+        self
     }
 
     /// Adds a total handler to an existing VecHandler chain.
@@ -1572,9 +1860,10 @@ impl<R, Op: 'static + Send> Handled<R, Op, VecHandler<Op>> {
 /// - [`PartialHandler`] - Trait for handlers that may decline operations
 /// - [`VecHandler`] - Collection of handlers tried in order
 /// - [`UnhandledOp`] - Error returned when no handler handles an operation
-/// - [`UnhandledOpError`] - Lightweight error with just operation name
-/// - [`IntoPartialHandler`] - Trait for converting handlers to PartialHandler
-/// - [`IntoVecHandler`] - Trait for converting handlers to VecHandler with flattening
+/// - [`UnhandledOpError`] - Non-generic error carrying the operation's rendered form
+/// - [`HandlerWrapper`] - Adapts a total [`Handler`] into a [`PartialHandler`]
+/// - [`ReplyError`] - Error returned by [`Reply::try_take`]
+/// - [`register_type`] - Registers a type name for use in reply-mismatch messages
 ///
 /// ## Macros (when "macros" feature is enabled)
 /// - `effect!` - Macro for defining effect families and operations
@@ -1584,8 +1873,8 @@ impl<R, Op: 'static + Send> Handled<R, Op, VecHandler<Op>> {
 /// # Examples
 ///
 /// ## With macros (default):
-/// ```rust,ignore
-/// #![feature(coroutines, coroutine_trait, yield_expr)]
+/// ```
+/// #![feature(coroutines, yield_expr)]
 /// use algae::prelude::*;
 ///
 /// // Define effects
@@ -1629,9 +1918,8 @@ impl<R, Op: 'static + Send> Handled<R, Op, VecHandler<Op>> {
 /// your effect types and handlers manually using the core types.
 pub mod prelude {
     pub use crate::{
-        register_type, Effect, Effectful, Handler, HandlerWrapper, IntoPartialHandler,
-        IntoVecHandler, PartialHandler, Reply, ReplyError, UnhandledOp, UnhandledOpError,
-        VecHandler,
+        register_type, Effect, Effectful, Handler, HandlerWrapper, PartialHandler, Reply,
+        ReplyError, UnhandledOp, UnhandledOpError, VecHandler,
     };
 
     #[cfg(feature = "macros")]
@@ -1645,9 +1933,13 @@ pub mod prelude {
 ///
 /// # Syntax
 ///
-/// ```ignore
-/// combine_roots!(pub Op = module_a::ConsoleOp, module_b::FileOp, module_c::NetOp);
+/// ```text
+/// combine_roots!(pub Op = ConsoleOp, FileOp, NetOp);
 /// ```
+///
+/// Each source enum is named by a **bare identifier**, not a path: the identifier
+/// becomes the variant name in the generated enum, so every root enum must already
+/// be in scope (import it with `use` first).
 ///
 /// This generates:
 /// - A new enum with the specified name containing all the other enums as variants
@@ -1655,7 +1947,7 @@ pub mod prelude {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```
 /// mod console {
 ///     use algae::prelude::*;
 ///     effect! {
@@ -1674,23 +1966,37 @@ pub mod prelude {
 ///     }
 /// }
 ///
+/// use algae::{combine_roots, prelude::*};
+/// use console::{Console, ConsoleOp};
+/// use file::{File, FileOp};
+///
 /// // Combine them into a unified root enum
-/// combine_roots!(pub Op = console::ConsoleOp, file::FileOp);
+/// combine_roots!(Op = ConsoleOp, FileOp);
 ///
 /// // Now you can write handlers for the unified Op enum
 /// struct UnifiedHandler;
 /// impl Handler<Op> for UnifiedHandler {
 ///     fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
 ///         match op {
-///             Op::ConsoleOp(console_op) => {
-///                 // Handle console operations
-///             }
-///             Op::FileOp(file_op) => {
-///                 // Handle file operations  
-///             }
+///             Op::ConsoleOp(console_op) => match console_op {
+///                 ConsoleOp::Console(Console::Print(msg)) => {
+///                     println!("{msg}");
+///                     Box::new(())
+///                 }
+///                 ConsoleOp::Console(Console::ReadLine) => Box::new("typed input".to_string()),
+///             },
+///             Op::FileOp(file_op) => match file_op {
+///                 FileOp::File(File::Read(path)) => Box::new(format!("contents of {path}")),
+///                 FileOp::File(File::Write(_)) => Box::new(()),
+///             },
 ///         }
 ///     }
 /// }
+///
+/// // The generated `From` impls lift a sub-enum into the combined root.
+/// let mut handler = UnifiedHandler;
+/// let reply = handler.handle(&Op::FileOp(File::Read("a.txt".to_string()).into()));
+/// assert_eq!(*reply.downcast::<String>().unwrap(), "contents of a.txt");
 /// ```
 #[macro_export]
 macro_rules! combine_roots {
@@ -3310,7 +3616,8 @@ mod tests {
 
     #[test]
     fn test_chained_handler_syntax() {
-        // Test the .handle().handle().handle() chaining pattern
+        // Test the .handle().handle().handle() chaining pattern. Plain
+        // `PartialHandler` types chain directly - no conversion impls needed.
         struct Handler1;
         impl PartialHandler<Op> for Handler1 {
             fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
@@ -3318,13 +3625,6 @@ mod tests {
                     Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
                     _ => None,
                 }
-            }
-        }
-        impl IntoVecHandler<Op> for Handler1 {
-            fn into_vec_handler(self) -> VecHandler<Op> {
-                let mut vec = VecHandler::new();
-                vec.push(self);
-                vec
             }
         }
 
@@ -3335,13 +3635,6 @@ mod tests {
                     Op::Math(Math::Multiply((a, b))) => Some(Box::new(a * b)),
                     _ => None,
                 }
-            }
-        }
-        impl IntoVecHandler<Op> for Handler2 {
-            fn into_vec_handler(self) -> VecHandler<Op> {
-                let mut vec = VecHandler::new();
-                vec.push(self);
-                vec
             }
         }
 
@@ -3356,13 +3649,6 @@ mod tests {
                     }
                     _ => None,
                 }
-            }
-        }
-        impl IntoVecHandler<Op> for Handler3 {
-            fn into_vec_handler(self) -> VecHandler<Op> {
-                let mut vec = VecHandler::new();
-                vec.push(self);
-                vec
             }
         }
 
@@ -3411,10 +3697,13 @@ mod tests {
     }
 
     #[test]
-    fn test_vec_handler_flattening() {
-        // Test that VecHandlers are properly flattened when chained
-        struct Handler1;
-        impl PartialHandler<Op> for Handler1 {
+    fn test_vec_handler_merge_and_nesting() {
+        // `merge` splices another VecHandler's handlers into the chain, while
+        // `handle` nests it as a single handler. Both preserve handler order, so
+        // they are observationally equivalent - including for precedence, which
+        // these handlers make visible by both claiming Math::Add.
+        struct AddHandler;
+        impl PartialHandler<Op> for AddHandler {
             fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
                 match op {
                     Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
@@ -3422,16 +3711,9 @@ mod tests {
                 }
             }
         }
-        impl IntoVecHandler<Op> for Handler1 {
-            fn into_vec_handler(self) -> VecHandler<Op> {
-                let mut vec = VecHandler::new();
-                vec.push(self);
-                vec
-            }
-        }
 
-        struct Handler2;
-        impl PartialHandler<Op> for Handler2 {
+        struct MultiplyHandler;
+        impl PartialHandler<Op> for MultiplyHandler {
             fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
                 match op {
                     Op::Math(Math::Multiply((a, b))) => Some(Box::new(a * b)),
@@ -3439,51 +3721,136 @@ mod tests {
                 }
             }
         }
-        impl IntoVecHandler<Op> for Handler2 {
-            fn into_vec_handler(self) -> VecHandler<Op> {
-                let mut vec = VecHandler::new();
-                vec.push(self);
-                vec
+
+        // Also claims Math::Add, but answers with a sentinel instead of the sum,
+        // so whichever handler is reached first is visible in the result.
+        struct SentinelAddHandler;
+        impl PartialHandler<Op> for SentinelAddHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Add(_)) => Some(Box::new(1i32)),
+                    _ => None,
+                }
             }
         }
 
         #[effectful]
         fn test_computation() -> i32 {
             let sum: i32 = perform!(Math::Add((10, 20)));
-            let product: i32 = perform!(Math::Multiply((sum, 2)));
-            product
+            perform!(Math::Multiply((sum, 2)))
         }
 
-        // Create a VecHandler with Handler1
-        let mut vec1 = VecHandler::new();
-        vec1.push(Handler1);
+        fn arithmetic() -> VecHandler<Op> {
+            let mut vec = VecHandler::new();
+            vec.push(AddHandler);
+            vec.push(MultiplyHandler);
+            vec
+        }
 
-        // Create another VecHandler with Handler2
-        let mut vec2 = VecHandler::new();
-        vec2.push(Handler2);
-
-        // Chain them together - this should flatten
-        let result = test_computation()
+        // Flattened: arithmetic's handlers are spliced in ahead of the sentinel.
+        let flattened = test_computation()
             .begin_chain()
-            .handle(vec1)
-            .handle(vec2)
+            .merge(arithmetic())
+            .handle(SentinelAddHandler)
             .run_checked();
 
-        assert_eq!(result.unwrap(), 60); // (10 + 20) * 2 = 60
+        assert_eq!(flattened, Ok(60)); // (10 + 20) * 2 = 60
 
-        // Verify that nesting VecHandlers still works
-        let mut outer_vec = VecHandler::new();
-        outer_vec.push(Handler1);
-
-        let mut inner_vec = VecHandler::new();
-        inner_vec.push(Handler2);
-
-        let result = test_computation()
-            .handle(outer_vec)
-            .handle(inner_vec)
+        // Nested: the same VecHandler passed to `handle` is tried as one unit,
+        // still ahead of the sentinel, so the result is unchanged.
+        let nested = test_computation()
+            .begin_chain()
+            .handle(arithmetic())
+            .handle(SentinelAddHandler)
             .run_checked();
 
-        assert_eq!(result.unwrap(), 60);
+        assert_eq!(nested, Ok(60));
+
+        // Putting the sentinel first wins in both shapes, confirming that
+        // neither merging nor nesting reorders the chain.
+        let sentinel_first_flat = test_computation()
+            .begin_chain()
+            .handle(SentinelAddHandler)
+            .merge(arithmetic())
+            .run_checked();
+
+        assert_eq!(sentinel_first_flat, Ok(2)); // sentinel 1, then 1 * 2
+
+        let sentinel_first_nested = test_computation()
+            .begin_chain()
+            .handle(SentinelAddHandler)
+            .handle(arithmetic())
+            .run_checked();
+
+        assert_eq!(sentinel_first_nested, Ok(2));
+    }
+
+    #[test]
+    fn test_unhandled_op_error_conversion() {
+        struct DeclineEverything;
+        impl PartialHandler<Op> for DeclineEverything {
+            fn maybe_handle(&mut self, _op: &Op) -> Option<Box<dyn Any + Send>> {
+                None
+            }
+        }
+
+        #[effectful]
+        fn computation() -> i32 {
+            perform!(Math::Add((2, 3)))
+        }
+
+        let unhandled = computation().run_checked(DeclineEverything).unwrap_err();
+
+        // UnhandledOp itself renders the operation it carries.
+        assert_eq!(
+            unhandled.to_string(),
+            "unhandled effect operation: Math(Add((2, 3)))"
+        );
+
+        // ...and the conversion preserves that rendering rather than discarding it.
+        let err: UnhandledOpError = unhandled.into();
+        assert_eq!(err.op_name, "Math(Add((2, 3)))");
+        assert_eq!(
+            err.to_string(),
+            "unhandled effect operation: Math(Add((2, 3)))"
+        );
+    }
+
+    #[test]
+    fn test_unhandled_op_is_std_error() {
+        struct DeclineEverything;
+        impl PartialHandler<Op> for DeclineEverything {
+            fn maybe_handle(&mut self, _op: &Op) -> Option<Box<dyn Any + Send>> {
+                None
+            }
+        }
+
+        #[effectful]
+        fn computation() -> i32 {
+            perform!(Math::Add((7, 8)))
+        }
+
+        // The `?` operator only compiles here because UnhandledOp implements
+        // std::error::Error, which is the point of this test.
+        fn run() -> Result<i32, Box<dyn std::error::Error>> {
+            Ok(computation().run_checked(DeclineEverything)?)
+        }
+
+        let boxed = run().unwrap_err();
+        assert_eq!(
+            boxed.to_string(),
+            "unhandled effect operation: Math(Add((7, 8)))"
+        );
+
+        // UnhandledOpError is likewise a std::error::Error.
+        let err = UnhandledOpError {
+            op_name: "Math(Add((7, 8)))".to_string(),
+        };
+        let boxed: Box<dyn std::error::Error> = Box::new(err);
+        assert_eq!(
+            boxed.to_string(),
+            "unhandled effect operation: Math(Add((7, 8)))"
+        );
     }
 
     // ============================================================================

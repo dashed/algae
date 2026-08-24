@@ -1,10 +1,11 @@
-//! Demonstrates that VecHandler flattening works correctly when chaining handlers.
+//! Demonstrates the two ways to fold one `VecHandler` into another when chaining.
 //!
-//! This example shows that when you pass a VecHandler to .handle(), its contents
-//! are properly flattened into the receiving VecHandler, avoiding nested structures.
+//! `.merge(vec)` splices the handlers of `vec` into the receiving chain, leaving a
+//! single flat collection. `.handle(vec)` nests `vec` as one boxed handler instead.
+//! Both preserve handler order, so the two forms answer every operation the same
+//! way - `merge` just avoids the extra layer of indirection.
 
-#![feature(coroutines, coroutine_trait, yield_expr)]
-use algae::impl_into_vec_handler;
+#![feature(coroutines, yield_expr)]
 use algae::prelude::*;
 
 // Define effects
@@ -54,106 +55,116 @@ impl PartialHandler<Op> for SquareHandler {
     }
 }
 
-// Implement IntoVecHandler for all handlers
-impl_into_vec_handler!(AddTenHandler, Op);
-impl_into_vec_handler!(MultiplyTwoHandler, Op);
-impl_into_vec_handler!(SquareHandler, Op);
-
 #[effectful]
 fn process_number(n: i32) -> i32 {
     perform!(Stage::Process(n))
 }
 
+/// The arithmetic handlers, grouped as a reusable `VecHandler`.
+fn arithmetic_handlers() -> VecHandler<Op> {
+    let mut handlers = VecHandler::new();
+    handlers.push(AddTenHandler);
+    handlers.push(MultiplyTwoHandler);
+    handlers
+}
+
+/// A second group, holding just the squaring handler.
+fn square_handlers() -> VecHandler<Op> {
+    let mut handlers = VecHandler::new();
+    handlers.push(SquareHandler);
+    handlers
+}
+
 fn main() {
-    println!("=== VecHandler Flattening Demo ===\n");
+    println!("=== VecHandler merging demo ===\n");
 
     println!("Test 1: Process 5 (should be handled by AddTenHandler)");
     {
-        // Create first VecHandler with two handlers
-        let mut vec1 = VecHandler::new();
-        vec1.push(AddTenHandler);
-        vec1.push(MultiplyTwoHandler);
-
-        // Create second VecHandler with one handler
-        let mut vec2 = VecHandler::new();
-        vec2.push(SquareHandler);
-
         let result = process_number(5)
             .begin_chain()
-            .handle(vec1) // Pass entire VecHandler
-            .handle(vec2) // Pass another VecHandler
+            .merge(arithmetic_handlers()) // Splice both arithmetic handlers in
+            .merge(square_handlers()) // ...then the squaring handler
             .run_checked();
 
         match result {
             Ok(n) => println!("Result: {n}\n"),
-            Err(UnhandledOp(op)) => println!("Unhandled: {op:?}\n"),
+            Err(unhandled) => println!("{unhandled}\n"),
         }
     }
 
     println!("Test 2: Process 150 (should be handled by MultiplyTwoHandler)");
     {
-        let mut vec1 = VecHandler::new();
-        vec1.push(AddTenHandler);
-        vec1.push(MultiplyTwoHandler);
-
-        let mut vec2 = VecHandler::new();
-        vec2.push(SquareHandler);
-
         let result = process_number(150)
             .begin_chain()
-            .handle(vec1)
-            .handle(vec2)
+            .merge(arithmetic_handlers())
+            .merge(square_handlers())
             .run_checked();
 
         match result {
             Ok(n) => println!("Result: {n}\n"),
-            Err(UnhandledOp(op)) => println!("Unhandled: {op:?}\n"),
+            Err(unhandled) => println!("{unhandled}\n"),
         }
     }
 
-    println!("Test 3: Process 4 (should be handled by SquareHandler)");
+    println!("Test 3: Process 4 (AddTenHandler wins - it comes first in the chain)");
     {
-        let mut vec1 = VecHandler::new();
-        vec1.push(AddTenHandler);
-        vec1.push(MultiplyTwoHandler);
-
-        let mut vec2 = VecHandler::new();
-        vec2.push(SquareHandler);
-
+        // 4 is below 100, so AddTenHandler claims it before SquareHandler is reached.
         let result = process_number(4)
             .begin_chain()
-            .handle(vec1)
-            .handle(vec2)
+            .merge(arithmetic_handlers())
+            .merge(square_handlers())
             .run_checked();
 
         match result {
             Ok(n) => println!("Result: {n}\n"),
-            Err(UnhandledOp(op)) => println!("Unhandled: {op:?}\n"),
+            Err(unhandled) => println!("{unhandled}\n"),
         }
     }
 
     println!("Test 4: Demonstrating handler order matters");
     {
-        // If we reverse the order, SquareHandler gets priority for even numbers
-        let mut vec1 = VecHandler::new();
-        vec1.push(AddTenHandler);
-        vec1.push(MultiplyTwoHandler);
-
-        let mut vec2 = VecHandler::new();
-        vec2.push(SquareHandler);
-
+        // Reversing the two groups gives SquareHandler priority for even numbers.
         let result = process_number(4)
             .begin_chain()
-            .handle(vec2) // SquareHandler first
-            .handle(vec1) // Other handlers second
+            .merge(square_handlers()) // SquareHandler first
+            .merge(arithmetic_handlers()) // Other handlers second
             .run_checked();
 
         match result {
             Ok(n) => println!("Result: {n} (SquareHandler took precedence)\n"),
-            Err(UnhandledOp(op)) => println!("Unhandled: {op:?}\n"),
+            Err(unhandled) => println!("{unhandled}\n"),
         }
     }
 
-    println!("✅ All VecHandlers were properly flattened!");
-    println!("✅ No nested VecHandler structures were created!");
+    println!("Test 5: `.handle(vec)` nests instead of flattening - same answers");
+    {
+        // Passing a VecHandler to `.handle()` stores it as a single boxed handler.
+        // The chain is one level deeper, but the operations still reach the same
+        // handlers in the same order, so Test 4's result is reproduced exactly.
+        let result = process_number(4)
+            .begin_chain()
+            .handle(square_handlers())
+            .handle(arithmetic_handlers())
+            .run_checked();
+
+        match result {
+            Ok(n) => println!("Result: {n} (identical to Test 4)\n"),
+            Err(unhandled) => println!("{unhandled}\n"),
+        }
+    }
+
+    println!("Test 6: an operation nobody handles");
+    {
+        // An empty chain declines everything. `run_checked` hands the operation
+        // back instead of panicking, which is what `.run()` would do here.
+        let result = process_number(7).begin_chain().run_checked();
+
+        match result {
+            Ok(n) => println!("Result: {n}\n"),
+            Err(unhandled) => println!("As expected: {unhandled}\n"),
+        }
+    }
+
+    println!("Merging keeps the handler collection flat;");
+    println!("nesting via `.handle()` is equivalent, just one indirection deeper.");
 }
