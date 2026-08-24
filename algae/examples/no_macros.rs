@@ -8,7 +8,7 @@
 //! cargo run --example no_macros --no-default-features
 //! ```
 
-#![feature(coroutines, coroutine_trait, yield_expr)]
+#![feature(coroutines, yield_expr)]
 use algae::prelude::*;
 use std::any::Any;
 

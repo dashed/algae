@@ -1,3 +1,4 @@
 [toolchain]
-channel = "nightly"
+# Keep this in sync with the toolchain pinned in .github/workflows/ci.yml.
+channel = "nightly-2026-08-24"
 components = ["rustfmt", "clippy"]

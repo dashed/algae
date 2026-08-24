@@ -1,3 +1,5 @@
+// `coroutine_trait` is needed here, and only here among the examples, because
+// this one drives a raw coroutine by naming `Coroutine`/`CoroutineState`.
 #![feature(coroutines, coroutine_trait, yield_expr)]
 
 use std::ops::{Coroutine, CoroutineState};

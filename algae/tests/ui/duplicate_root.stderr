@@ -1,0 +1,146 @@
+error[E0428]: the name `__ALGAE_EFFECT_SENTRY_FOR_Op` is defined multiple times
+  --> tests/ui/duplicate_root.rs:12:1
+   |
+ 7 | effect! {
+   | ------- previous definition of the type `__ALGAE_EFFECT_SENTRY_FOR_Op` here
+...
+12 | effect! {
+   | ^^^^^^^ `__ALGAE_EFFECT_SENTRY_FOR_Op` redefined here
+   |
+   = note: `__ALGAE_EFFECT_SENTRY_FOR_Op` must be defined only once in the type namespace of this module
+   = note: this error originates in the macro `effect` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0428]: the name `Op` is defined multiple times
+  --> tests/ui/duplicate_root.rs:12:1
+   |
+ 7 | effect! {
+   | ------- previous definition of the type `Op` here
+...
+12 | effect! {
+   | ^^^^^^^ `Op` redefined here
+   |
+   = note: `Op` must be defined only once in the type namespace of this module
+   = note: this error originates in the macro `effect` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0119]: conflicting implementations of trait `Debug` for type `Op`
+  --> tests/ui/duplicate_root.rs:12:1
+   |
+ 7 | / effect! {
+ 8 | |     Console::Print (String) -> ();
+ 9 | |     Console::ReadLine -> String;
+10 | | }
+   | |_- first implementation here
+11 |
+12 | / effect! {
+13 | |     Math::Add ((i32, i32)) -> i32;
+14 | |     Math::Multiply ((i32, i32)) -> i32;
+15 | | }
+   | |_^ conflicting implementation for `Op`
+
+error[E0119]: conflicting implementations of trait `Clone` for type `Op`
+  --> tests/ui/duplicate_root.rs:12:1
+   |
+ 7 | / effect! {
+ 8 | |     Console::Print (String) -> ();
+ 9 | |     Console::ReadLine -> String;
+10 | | }
+   | |_- first implementation here
+11 |
+12 | / effect! {
+13 | |     Math::Add ((i32, i32)) -> i32;
+14 | |     Math::Multiply ((i32, i32)) -> i32;
+15 | | }
+   | |_^ conflicting implementation for `Op`
+
+error[E0119]: conflicting implementations of trait `StructuralPartialEq` for type `Op`
+  --> tests/ui/duplicate_root.rs:12:1
+   |
+ 7 | / effect! {
+ 8 | |     Console::Print (String) -> ();
+ 9 | |     Console::ReadLine -> String;
+10 | | }
+   | |_- first implementation here
+11 |
+12 | / effect! {
+13 | |     Math::Add ((i32, i32)) -> i32;
+14 | |     Math::Multiply ((i32, i32)) -> i32;
+15 | | }
+   | |_^ conflicting implementation for `Op`
+
+error[E0119]: conflicting implementations of trait `PartialEq` for type `Op`
+  --> tests/ui/duplicate_root.rs:12:1
+   |
+ 7 | / effect! {
+ 8 | |     Console::Print (String) -> ();
+ 9 | |     Console::ReadLine -> String;
+10 | | }
+   | |_- first implementation here
+11 |
+12 | / effect! {
+13 | |     Math::Add ((i32, i32)) -> i32;
+14 | |     Math::Multiply ((i32, i32)) -> i32;
+15 | | }
+   | |_^ conflicting implementation for `Op`
+
+error[E0599]: no variant, associated function, or constant named `Math` found for enum `Op` in the current scope
+  --> tests/ui/duplicate_root.rs:12:1
+   |
+ 7 | / effect! {
+ 8 | |     Console::Print (String) -> ();
+ 9 | |     Console::ReadLine -> String;
+10 | | }
+   | |_- variant, associated function, or constant `Math` not found for this enum
+11 |
+12 |   effect! {
+   |  _^
+13 | |     Math::Add ((i32, i32)) -> i32;
+14 | |     Math::Multiply ((i32, i32)) -> i32;
+15 | | }
+   | |_^ variant, associated function, or constant not found in `Op`
+
+error[E0599]: no variant, associated function, or constant named `Math` found for enum `Op` in the current scope
+  --> tests/ui/duplicate_root.rs:12:1
+   |
+ 7 | / effect! {
+ 8 | |     Console::Print (String) -> ();
+ 9 | |     Console::ReadLine -> String;
+10 | | }
+   | |_- variant, associated function, or constant `Math` not found for this enum
+11 |
+12 |   effect! {
+   |  _^
+13 | |     Math::Add ((i32, i32)) -> i32;
+14 | |     Math::Multiply ((i32, i32)) -> i32;
+15 | | }
+   | |_^ variant, associated function, or constant not found in `Op`
+
+error[E0599]: no variant, associated function, or constant named `Math` found for enum `Op` in the current scope
+  --> tests/ui/duplicate_root.rs:12:1
+   |
+ 7 | / effect! {
+ 8 | |     Console::Print (String) -> ();
+ 9 | |     Console::ReadLine -> String;
+10 | | }
+   | |_- variant, associated function, or constant `Math` not found for this enum
+11 |
+12 |   effect! {
+   |  _^
+13 | |     Math::Add ((i32, i32)) -> i32;
+14 | |     Math::Multiply ((i32, i32)) -> i32;
+15 | | }
+   | |_^ variant, associated function, or constant not found in `Op`
+
+error[E0599]: no variant, associated function, or constant named `Math` found for enum `Op` in the current scope
+  --> tests/ui/duplicate_root.rs:13:5
+   |
+ 7 | / effect! {
+ 8 | |     Console::Print (String) -> ();
+ 9 | |     Console::ReadLine -> String;
+10 | | }
+   | |_- variant, associated function, or constant `Math` not found for this enum
+11 |
+12 | / effect! {
+13 | |     Math::Add ((i32, i32)) -> i32;
+   | |    -^^^^ variant, associated function, or constant not found in `Op`
+   | |____|
+   |

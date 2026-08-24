@@ -3,7 +3,7 @@
 //! This example shows that `#[effectful]` and `perform!` are pure convenience macros
 //! that generate exactly the same code as the explicit approach.
 
-#![feature(coroutines, coroutine_trait, yield_expr)]
+#![feature(coroutines, yield_expr)]
 use algae::prelude::*;
 
 // Define our effects

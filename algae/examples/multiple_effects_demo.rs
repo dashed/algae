@@ -5,7 +5,7 @@
 //! 2. Multiple effect! with custom root names
 //! 3. Module-based separation for large codebases
 
-#![feature(coroutines, coroutine_trait, yield_expr)]
+#![feature(coroutines, yield_expr)]
 use algae::prelude::*;
 
 // ============================================================================

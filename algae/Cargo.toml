@@ -1,7 +1,11 @@
 [package]
 name = "algae"
 version = "0.1.0"
-edition = "2021"
+description = "One-shot algebraic effects and handlers for Rust, built on nightly coroutines"
+readme = "../README.md"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [features]
 default = ["macros"]
@@ -9,6 +13,9 @@ macros = ["algae-macros"]
 
 [dependencies]
 algae-macros = { path = "../algae-macros", optional = true }
+
+[dev-dependencies]
+trybuild = "1"
 
 # Examples that require macros
 [[example]]
@@ -59,7 +66,29 @@ required-features = ["macros"]
 name = "custom_root_effects"
 required-features = ["macros"]
 
-
 [[example]]
 name = "test_error_messages"
 required-features = ["macros"]
+
+[[example]]
+name = "partial_handlers"
+required-features = ["macros"]
+
+[[example]]
+name = "variable_handler_chain"
+required-features = ["macros"]
+
+[[example]]
+name = "chained_handlers"
+required-features = ["macros"]
+
+[[example]]
+name = "clean_chaining"
+required-features = ["macros"]
+
+[[example]]
+name = "vec_handler_flattening_demo"
+required-features = ["macros"]
+
+# `no_macros` deliberately has no stanza: it must keep building with
+# `--no-default-features`.

@@ -6,7 +6,7 @@
 //! - Get Result-based error handling instead of panics
 //! - Build modular, testable effect systems
 
-#![feature(coroutines, coroutine_trait, yield_expr)]
+#![feature(coroutines, yield_expr)]
 use algae::prelude::*;
 
 // Define our effects

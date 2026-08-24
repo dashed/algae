@@ -1,4 +1,4 @@
-#![feature(coroutines, coroutine_trait, yield_expr)]
+#![feature(coroutines, yield_expr)]
 //! # Algae Overview - Where to Find Examples
 //!
 //! This example provides a roadmap to all the examples and documentation

@@ -42,7 +42,7 @@ Add algae to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-algae = { git = "https://github.com/your-username/algae.git" }
+algae = { git = "https://github.com/dashed/algae.git" }
 ```
 
 Or clone the repository and use it as a local dependency:
@@ -55,13 +55,15 @@ algae = { path = "../algae" }
 Enable the required nightly features in your `src/main.rs` or `lib.rs`:
 
 ```rust
-#![feature(coroutines, coroutine_trait, yield_expr)]
+#![feature(coroutines, yield_expr)]
 ```
+
+You only need to add `coroutine_trait` on top of these if you name the `Coroutine` trait yourself — for instance when writing a custom driver instead of using `Effectful::run`.
 
 Here's a step-by-step example showing both the explicit and convenient approaches:
 
 ```rust
-#![feature(coroutines, coroutine_trait, yield_expr)]
+#![feature(coroutines, yield_expr)]
 use algae::prelude::*;
 
 // 1. Define your effects
@@ -868,7 +870,7 @@ cargo run --example no_macros --no-default-features
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/algae.git
+git clone https://github.com/dashed/algae.git
 cd algae
 
 # Ensure you're using nightly Rust
@@ -975,7 +977,7 @@ algae = { version = "0.1.0", default-features = false }
 When macros are disabled, you define everything manually:
 
 ```rust
-#![feature(coroutines, coroutine_trait, yield_expr)]
+#![feature(coroutines, yield_expr)]
 use algae::prelude::*;  // Only exports core types, no macros
 use std::any::Any;
 
@@ -1457,7 +1459,10 @@ Algae supports **partial handlers** that can selectively handle operations, enab
 
 #### Variable-Length Handler Chains
 
-The library now supports chaining an arbitrary number of handlers together:
+The library now supports chaining an arbitrary number of handlers together. Any type
+implementing `PartialHandler` can be passed to `.handle(...)` directly — no adapter
+traits or boilerplate impls are needed. To fold an existing `VecHandler`'s handlers
+into a chain without nesting, use `.merge(vec_handler)`:
 
 ```rust
 // Using handle_all to attach multiple handlers at once

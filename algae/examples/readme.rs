@@ -1,4 +1,4 @@
-#![feature(coroutines, coroutine_trait, yield_expr)]
+#![feature(coroutines, yield_expr)]
 use algae::prelude::*;
 
 // 1. Define your effects

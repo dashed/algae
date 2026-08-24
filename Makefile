@@ -34,9 +34,10 @@ help: ## Show this help message
 
 # === Testing ===
 
-test: ## Run all tests (library and macros)
+test: ## Run all tests (library, integration, doctests, and macros)
 	@echo "$(BOLD)$(GREEN)Running all tests...$(RESET)"
-	@cargo test --lib --verbose
+	@cargo test -p algae --tests --verbose
+	@cargo test -p algae --doc --verbose
 	@cargo test -p algae-macros --verbose
 
 test-lib: ## Run library tests only
@@ -68,12 +69,12 @@ clippy: ## Run clippy lints (matches original GitHub Actions intent)
 	@cargo clippy --example minimal || true
 	@cargo clippy --example overview || true
 
-clippy-strict: ## Run clippy with all targets and strict warnings (excludes duplicate_root_test)
+clippy-strict: ## Run clippy with all targets and strict warnings
 	@echo "$(BOLD)$(YELLOW)Running clippy on all targets (strict)...$(RESET)"
 	@cargo clippy --lib --all-features -- -D warnings
 	@cargo clippy --bins --all-features -- -D warnings
 	@cargo clippy --tests --all-features -- -D warnings
-	@for example in $$(ls algae/examples/*.rs | grep -v duplicate_root_test | sed 's/.*\///' | sed 's/\.rs//'); do \
+	@for example in $$(ls algae/examples/*.rs | sed 's/.*\///' | sed 's/\.rs//'); do \
 		echo "$(YELLOW)Checking example: $$example$(RESET)"; \
 		cargo clippy --example $$example --all-features -- -D warnings; \
 	done
@@ -102,37 +103,12 @@ doc-open: ## Build and open documentation in browser
 
 # === Examples ===
 
-examples: ## Check that all working examples compile
-	@echo "$(BOLD)$(GREEN)Checking working examples...$(RESET)"
-	@echo "$(YELLOW)✓$(RESET) multiple_effects_demo"
-	@cargo check --example multiple_effects_demo
-	@echo "$(YELLOW)✓$(RESET) custom_root_effects"
-	@cargo check --example custom_root_effects
-	@echo "$(YELLOW)✓$(RESET) test_error_messages"
-	@cargo check --example test_error_messages
-	@echo "$(YELLOW)✓$(RESET) console"
-	@cargo check --example console
-	@echo "$(YELLOW)✓$(RESET) minimal"
-	@cargo check --example minimal
-	@echo "$(YELLOW)✓$(RESET) overview"
-	@cargo check --example overview
-	@echo "$(YELLOW)✓$(RESET) theory"
-	@cargo check --example theory
-	@echo "$(YELLOW)✓$(RESET) advanced"
-	@cargo check --example advanced
-	@echo "$(YELLOW)✓$(RESET) test_non_default_payload"
-	@cargo check --example test_non_default_payload
-	@echo "$(YELLOW)✓$(RESET) test_manual_default"
-	@cargo check --example test_manual_default
-	@echo "$(YELLOW)✓$(RESET) test_custom_root_effectful"
-	@cargo check --example test_custom_root_effectful
-	@echo "$(YELLOW)✓$(RESET) test_effectful_backwards_compatibility"
-	@cargo check --example test_effectful_backwards_compatibility
-	@echo "$(YELLOW)✓$(RESET) test_effectful_scoping_simple"
-	@cargo check --example test_effectful_scoping_simple
-	@echo "$(YELLOW)✓$(RESET) test_effectful_scoping_fix"
-	@cargo check --example test_effectful_scoping_fix
-	@echo "$(GREEN)All working examples compile successfully!$(RESET)"
+examples: ## Check that all examples compile
+	@echo "$(BOLD)$(GREEN)Checking examples (all features)...$(RESET)"
+	@cargo check -p algae --examples --all-features
+	@echo "$(BOLD)$(GREEN)Checking examples (no default features)...$(RESET)"
+	@cargo check -p algae --examples --no-default-features
+	@echo "$(GREEN)All examples compile successfully!$(RESET)"
 
 run-examples: ## Run selected examples to see them in action
 	@echo "$(BOLD)$(GREEN)Running examples...$(RESET)"
@@ -151,13 +127,8 @@ run-examples: ## Run selected examples to see them in action
 
 test-error-detection: ## Verify that error detection works correctly
 	@echo "$(BOLD)$(YELLOW)Testing error detection...$(RESET)"
-	@echo "$(CYAN)Verifying duplicate_root_test fails as expected:$(RESET)"
-	@if cargo check --example duplicate_root_test 2>/dev/null; then \
-		echo "$(RED)ERROR: duplicate_root_test should fail but succeeded!$(RESET)"; \
-		exit 1; \
-	else \
-		echo "$(GREEN)✓ duplicate_root_test correctly fails to compile$(RESET)"; \
-	fi
+	@echo "$(CYAN)Checking tests/ui/*.rs against their .stderr snapshots:$(RESET)"
+	@cargo test -p algae --test compile_fail
 
 # === Benchmarks ===
 

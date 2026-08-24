@@ -1,4 +1,4 @@
-#![feature(coroutines, coroutine_trait, yield_expr)]
+#![feature(coroutines, yield_expr)]
 //! This example demonstrates the mapping between algebraic effects theory
 //! and the algae implementation, as described in the README.
 

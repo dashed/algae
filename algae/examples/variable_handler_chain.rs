@@ -6,7 +6,7 @@
 //! - Use run_checked for panic-free execution
 //! - Handle unhandled operations gracefully
 
-#![feature(coroutines, coroutine_trait, yield_expr)]
+#![feature(coroutines, yield_expr)]
 use algae::prelude::*;
 
 // Define our effects

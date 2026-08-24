@@ -1,6 +1,6 @@
 //! Example demonstrating improved error messages for type mismatches
 
-#![feature(coroutines, coroutine_trait, yield_expr)]
+#![feature(coroutines, yield_expr)]
 use algae::prelude::*;
 
 effect! {

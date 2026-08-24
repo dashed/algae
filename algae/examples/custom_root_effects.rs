@@ -3,7 +3,7 @@
 //! This example shows how to use the new `root EnumName;` syntax to avoid
 //! conflicts when using multiple effect! macros in the same module.
 
-#![feature(coroutines, coroutine_trait, yield_expr)]
+#![feature(coroutines, yield_expr)]
 use algae::prelude::*;
 
 // ============================================================================

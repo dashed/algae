@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ master, main ]
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -16,20 +19,22 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Install Rust nightly
-      uses: dtolnay/rust-toolchain@nightly
+      # Keep this pin in sync with the channel in rust-toolchain.toml.
+      uses: dtolnay/rust-toolchain@master
       with:
+        toolchain: nightly-2026-08-24
         components: rustfmt, clippy
 
     - name: Cache dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/.cargo/registry
           ~/.cargo/git
           target/
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        key: ${{ runner.os }}-cargo-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
 
     - name: Run complete CI pipeline via Makefile
       run: make ci-local

@@ -1,4 +1,4 @@
-#![feature(coroutines, coroutine_trait, yield_expr)]
+#![feature(coroutines, yield_expr)]
 #![cfg(feature = "macros")]
 
 //! # Algebraic Laws Tests - A Learning Guide to Algebraic Effects
