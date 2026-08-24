@@ -1,0 +1,14 @@
+error[E0308]: mismatched types
+  --> tests/ui/typed_perform_wrong_type.rs:10:1
+   |
+10 | #[effectful]
+   | ^^^^^^^^^^^^ expected `String`, found `i32`
+11 | fn wrong() -> String {
+12 |     let s: String = perform!(Math::add(1, 2)); // declared reply type is i32
+   |                     ------------------------- in this macro invocation
+   |
+   = note: this error originates in the macro `perform` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: try using a conversion method
+   |
+10 | #[effectful].to_string()
+   |             ++++++++++++

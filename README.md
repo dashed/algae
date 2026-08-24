@@ -139,6 +139,52 @@ For each `effect!` block the macro generates one enum per family, a root enum
 impls. All generated enums are `pub` and derive `Debug`, `Clone`, and
 `PartialEq` — so every payload type must implement those three traits.
 
+## The typed API
+
+Alongside the enums, `effect!` generates a **typed API** that removes both the
+annotation tax at perform sites and the boxing/matching boilerplate in
+handlers.
+
+Every operation gets a snake_case constructor carrying its declared reply
+type. `perform!` accepts these and infers everything — and asking for the
+wrong type becomes a *compile* error at the perform site instead of a runtime
+panic:
+
+```rust
+#[effectful]
+fn greet() -> String {
+    perform!(Console::print("What's your name?".to_string())); // no `let _: () =`
+    let name = perform!(Console::read_line());  // inferred String
+    let n = perform!(Math::add(1, 2));          // tuple payload -> named parameters
+    format!("Hello, {name}! ({n})")
+}
+```
+
+Every family gets a typed handler trait plus an adapter that turns any
+implementation into a `PartialHandler` — no `Box::new`, no nested `match`,
+and a missing operation is a missing-method compile error:
+
+```rust
+struct MockConsole { input: String }
+
+impl ConsoleOps for MockConsole {
+    fn print(&mut self, value: &String) { println!("[mock] {value}"); }
+    fn read_line(&mut self) -> String { self.input.clone() }
+}
+
+let result = greet()
+    .begin_chain()
+    .handle(HandleConsole(MockConsole { input: "Ada".into() }))
+    .handle(HandleMath(RealMath))
+    .run_checked()?;
+```
+
+Naming: `ReadLine` → `read_line` (keywords become raw identifiers: `Move` →
+`r#move`); trait and adapter are `{Family}Ops` / `Handle{Family}`. The legacy
+forms — `perform!(Console::Print(msg))` with an annotation, hand-written
+`Handler` impls — keep working unchanged, in the same functions. See
+[`examples/typed_api.rs`](algae/examples/typed_api.rs).
+
 ## Handlers
 
 There are two handler traits:
@@ -352,6 +398,7 @@ Run any of these with `cargo run --example <name>` (add
 | Example | Shows |
 |---|---|
 | `readme` | The quick-start program with real and mock handlers |
+| `typed_api` | Generated typed constructors and handler traits |
 | `overview` | Guided tour of the examples, tests, and docs |
 | `minimal` | Raw coroutine mechanics beneath `Effectful` |
 | `effect_test` | Smallest end-to-end effect round trip |

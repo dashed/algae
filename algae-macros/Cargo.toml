@@ -1,6 +1,6 @@
 [package]
 name = "algae-macros"
-version = "0.1.0"
+version = "0.2.0"
 description = "Procedural macros for the algae algebraic effects library"
 edition.workspace = true
 license.workspace = true

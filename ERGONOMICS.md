@@ -1,12 +1,19 @@
 # Algae Ergonomics Investigation
 
-> **Status (2026-08-24):** Wave 1 is implemented — P6 diagnostics
-> (`compile_error!` fallbacks for `perform!`/`call!`,
+> **Status (2026-08-24):** Waves 1 **and 2** are implemented (version 0.2.0).
+> Wave 1 — P6 diagnostics (`compile_error!` fallbacks for `perform!`/`call!`,
 > `#[diagnostic::on_unimplemented]` on the handler traits), P3 `&mut` handler
 > blankets + `handler_fn` (note: `&mut` works with the direct run methods, not
 > inside `'static`-boxed `VecHandler` chains), P5 `ScriptHandler`, and P4
-> `Effectful::resume`/`Step` + `call!`. Waves 2–3 (typed perform via witness
-> types, typed handler traits, declaration polish) remain open.
+> `Effectful::resume`/`Step` + `call!`. Wave 2 — P1 typed perform (generated
+> snake_case constructors returning `TypedOp<Root, Ret>`; one `perform!` serves
+> both typed and legacy forms via inherent-over-trait dispatch on `PerformArg`;
+> wrong-type requests are compile errors, covered by a trybuild test) and P2
+> typed handler traits (`{Family}Ops` + `Handle{Family}` adapters, with `&mut`
+> forwarding). Both landed additively — legacy forms keep compiling. Wave 3
+> (declaration polish: visibility/derive configuration, `Handled::handle`
+> naming) remains open, as does eventual deprecation of the legacy perform
+> form and the then-obsolete `register_type` registry.
 
 - **Date:** 2026-08-24, at commit `2772de0`
 - **Method:** friction inventory drawn from algae's own source, tests, and

@@ -81,7 +81,7 @@ struct OpLine {
     variant: Ident,
     payload: Option<Type>,
     _arrow: Token![->],
-    _ret: Type,
+    ret: Type,
 }
 
 impl Parse for OpLine {
@@ -111,7 +111,7 @@ impl Parse for OpLine {
             variant,
             payload,
             _arrow: arrow,
-            _ret: ret,
+            ret,
         })
     }
 }
@@ -151,6 +151,36 @@ impl Parse for EffectInput {
         let lines = Punctuated::<OpLine, Token![;]>::parse_terminated(input)?;
         Ok(Self { root_ident, lines })
     }
+}
+
+/// Converts a CamelCase/PascalCase identifier to snake_case, handling acronym
+/// runs: `ReadLine` -> `read_line`, `IO` -> `io`, `HTTPServer` -> `http_server`.
+fn to_snake_case(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len() + 4);
+    for (i, &c) in chars.iter().enumerate() {
+        if c.is_uppercase() {
+            let prev_lower_or_digit =
+                i > 0 && (chars[i - 1].is_lowercase() || chars[i - 1].is_ascii_digit());
+            let acronym_end = i > 0
+                && chars[i - 1].is_uppercase()
+                && chars.get(i + 1).is_some_and(|n| n.is_lowercase());
+            if prev_lower_or_digit || acronym_end {
+                out.push('_');
+            }
+            out.extend(c.to_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Builds a snake_case ident from a variant/family name, falling back to a raw
+/// identifier when the result is a Rust keyword (`Move` -> `r#move`).
+fn snake_ident(source: &Ident) -> Ident {
+    let name = to_snake_case(&source.to_string());
+    syn::parse_str::<Ident>(&name).unwrap_or_else(|_| Ident::new_raw(&name, source.span()))
 }
 
 /// Defines effect families and their operations.
@@ -215,6 +245,51 @@ impl Parse for EffectInput {
 /// - `From` implementations to convert family enums to the root enum
 /// - `Debug`, `Clone` and `PartialEq` derives on every generated enum
 /// - A hidden sentry enum to detect duplicate root names
+/// - The **typed API** (see below): a snake_case constructor per operation, and a
+///   typed handler trait + adapter per family
+///
+/// ## Generated Typed API
+///
+/// For every operation, `effect!` generates a snake_case associated function on
+/// the family enum returning `TypedOp<Root, Ret>` — the operation paired with
+/// its declared reply type. `perform!` accepts these witnesses and infers the
+/// reply type from them, so no annotations are needed and a request for the
+/// wrong type is a *compile* error at the perform site:
+///
+/// ```ignore
+/// effect! { Math::Add ((i32, i32)) -> i32; }
+///
+/// // generated (simplified):
+/// // impl Math { pub fn add(v0: i32, v1: i32) -> TypedOp<Op, i32> { ... } }
+///
+/// #[effectful]
+/// fn f() -> i32 {
+///     let n = perform!(Math::add(1, 2)); // inferred i32; tuple flattened
+///     n
+/// }
+/// ```
+///
+/// For every family, `effect!` also generates a typed handler trait
+/// (`{Family}Ops`, one typed method per operation) and an adapter struct
+/// (`Handle{Family}`) implementing `PartialHandler<Root>` by dispatching to it:
+///
+/// ```ignore
+/// // generated (simplified):
+/// // pub trait MathOps { fn add(&mut self, v0: &i32, v1: &i32) -> i32; }
+/// // pub struct HandleMath<T>(pub T);   // impl PartialHandler<Op>
+///
+/// struct RealMath;
+/// impl MathOps for RealMath {
+///     fn add(&mut self, v0: &i32, v1: &i32) -> i32 { v0 + v1 }
+/// }
+/// let result = f().run_checked(HandleMath(RealMath));
+/// ```
+///
+/// Naming: operation names are converted to snake_case (`ReadLine` →
+/// `read_line`); a name that would collide with a Rust keyword becomes a raw
+/// identifier (`Move` → `r#move`). Tuple payloads flatten into one parameter
+/// per element (`v0`, `v1`, …); other payloads become a single `value`
+/// parameter. The legacy enum forms keep working alongside the typed API.
 ///
 /// # Payload and Derive Requirements
 ///
@@ -314,6 +389,7 @@ pub fn effect(item: TokenStream) -> TokenStream {
     struct VariantInfo {
         variant: Ident,
         payload: Option<Type>,
+        ret: Type,
     }
 
     let mut families: BTreeMap<String, (Ident, Vec<VariantInfo>)> = BTreeMap::new();
@@ -325,6 +401,7 @@ pub fn effect(item: TokenStream) -> TokenStream {
         entry.1.push(VariantInfo {
             variant: l.variant,
             payload: l.payload,
+            ret: l.ret,
         });
     }
 
@@ -332,17 +409,106 @@ pub fn effect(item: TokenStream) -> TokenStream {
     let mut family_enums = TokenStream2::new();
     let mut op_variants = TokenStream2::new();
     let mut impl_froms = TokenStream2::new();
+    let mut typed_api = TokenStream2::new();
 
     for (_fam_name_str, (family_ident, variants)) in families {
         // each variant
         let mut variant_tokens = TokenStream2::new();
+        let mut ctor_fns = TokenStream2::new();
+        let mut trait_methods = TokenStream2::new();
+        let mut trait_forwards = TokenStream2::new();
+        let mut adapter_arms = TokenStream2::new();
+
         for v in &variants {
-            let VariantInfo { variant, payload } = v;
+            let VariantInfo {
+                variant,
+                payload,
+                ret,
+            } = v;
             if let Some(ty) = payload {
                 variant_tokens.extend(quote! { #variant(#ty), });
             } else {
                 variant_tokens.extend(quote! { #variant, });
             }
+
+            // ── Typed API per operation ─────────────────────────────────────
+            let method = snake_ident(variant);
+            let is_unit_ret = matches!(ret, Type::Tuple(t) if t.elems.is_empty());
+            let trait_ret = if is_unit_ret {
+                quote! {}
+            } else {
+                quote! { -> #ret }
+            };
+            let ctor_doc = format!(
+                "Typed constructor for [`{family_ident}::{variant}`]: use with `perform!` \
+                 to get a `{ret}` reply with no type annotation.",
+                ret = quote!(#ret)
+            );
+
+            // Parameter lists: tuple payloads flatten into one parameter per
+            // element; other payloads become a single `value` parameter.
+            let (param_names, param_types): (Vec<Ident>, Vec<Type>) = match payload {
+                Some(Type::Tuple(t)) => t
+                    .elems
+                    .iter()
+                    .enumerate()
+                    .map(|(i, ty)| {
+                        (
+                            Ident::new(&format!("v{i}"), proc_macro2::Span::call_site()),
+                            ty.clone(),
+                        )
+                    })
+                    .unzip(),
+                Some(other) => (
+                    vec![Ident::new("value", proc_macro2::Span::call_site())],
+                    vec![other.clone()],
+                ),
+                None => (Vec::new(), Vec::new()),
+            };
+
+            let payload_expr = match payload {
+                Some(Type::Tuple(_)) => quote! { (#(#param_names,)*) },
+                Some(_) => quote! { #(#param_names)* },
+                None => quote! {},
+            };
+            let ctor_body = if payload.is_some() {
+                quote! { #family_ident::#variant(#payload_expr) }
+            } else {
+                quote! { #family_ident::#variant }
+            };
+            ctor_fns.extend(quote! {
+                #[doc = #ctor_doc]
+                pub fn #method(#(#param_names: #param_types),*) -> algae::TypedOp<#root_ident, #ret> {
+                    algae::TypedOp::new(#root_ident::#family_ident(#ctor_body))
+                }
+            });
+
+            // Typed handler trait method (payloads arrive by reference, since
+            // the adapter dispatches from a `&Root`).
+            trait_methods.extend(quote! {
+                fn #method(&mut self, #(#param_names: &#param_types),*) #trait_ret;
+            });
+            trait_forwards.extend(quote! {
+                fn #method(&mut self, #(#param_names: &#param_types),*) #trait_ret {
+                    (**self).#method(#(#param_names),*)
+                }
+            });
+
+            // Adapter match arm: dispatch to the typed method and box the result.
+            let pattern = match payload {
+                Some(Type::Tuple(_)) => {
+                    quote! { #root_ident::#family_ident(#family_ident::#variant((#(#param_names,)*))) }
+                }
+                Some(_) => {
+                    quote! { #root_ident::#family_ident(#family_ident::#variant(#(#param_names)*)) }
+                }
+                None => quote! { #root_ident::#family_ident(#family_ident::#variant) },
+            };
+            adapter_arms.extend(quote! {
+                #pattern => ::std::option::Option::Some(
+                    ::std::boxed::Box::new(self.0.#method(#(#param_names),*))
+                ),
+            });
         }
 
         family_enums.extend(quote! {
@@ -358,6 +524,55 @@ pub fn effect(item: TokenStream) -> TokenStream {
         impl_froms.extend(quote! {
             impl From<#family_ident> for #root_ident {
                 fn from(f: #family_ident) -> Self { #root_ident::#family_ident(f) }
+            }
+        });
+
+        // ── Typed API per family ────────────────────────────────────────────
+        let ops_trait = Ident::new(&format!("{family_ident}Ops"), family_ident.span());
+        let adapter = Ident::new(&format!("Handle{family_ident}"), family_ident.span());
+        let ops_trait_doc = format!(
+            "Typed handler interface for the `{family_ident}` effect family, generated by \
+             `effect!`. Implement this and wrap the value in [`{adapter}`] to obtain a \
+             `PartialHandler` — no boxing, no `match`, and reply types checked at compile time."
+        );
+        let adapter_doc = format!(
+            "Adapts a [`{ops_trait}`] implementation into a `PartialHandler<{root_ident}>`: \
+             handles `{family_ident}` operations, declines everything else."
+        );
+
+        typed_api.extend(quote! {
+            #[allow(clippy::new_ret_no_self, clippy::wrong_self_convention)]
+            impl #family_ident {
+                #ctor_fns
+            }
+
+            #[doc = #ops_trait_doc]
+            // Payloads arrive as references to whatever type the declaration
+            // used; clippy's ptr_arg (&String -> &str etc.) does not apply.
+            #[allow(clippy::ptr_arg)]
+            pub trait #ops_trait {
+                #trait_methods
+            }
+
+            #[allow(clippy::ptr_arg)]
+            impl<__T: #ops_trait> #ops_trait for &mut __T {
+                #trait_forwards
+            }
+
+            #[doc = #adapter_doc]
+            pub struct #adapter<__T>(pub __T);
+
+            impl<__T: #ops_trait> algae::PartialHandler<#root_ident> for #adapter<__T> {
+                fn maybe_handle(
+                    &mut self,
+                    op: &#root_ident,
+                ) -> ::std::option::Option<::std::boxed::Box<dyn ::std::any::Any + Send>> {
+                    #[allow(unreachable_patterns)]
+                    match op {
+                        #adapter_arms
+                        _ => ::std::option::Option::None,
+                    }
+                }
             }
         });
     }
@@ -378,6 +593,8 @@ pub fn effect(item: TokenStream) -> TokenStream {
         }
 
         #impl_froms
+
+        #typed_api
     };
 
     output.into()
@@ -628,11 +845,17 @@ pub fn effectful(args: TokenStream, item: TokenStream) -> TokenStream {
             #[allow(unused_macros)]
             macro_rules! perform {
                 ($e:expr) => {{
-                    let __eff = algae::Effect::new(($e).into());
+                    // Method dispatch picks the path by argument type: the
+                    // inherent `prepare` on `PerformArg<TypedOp<..>>` pins the
+                    // reply type for typed constructors; the `PrepareLegacy`
+                    // trait covers plain enum operations with inference, as
+                    // before.
+                    #[allow(unused_imports)]
+                    use algae::PrepareLegacy as _;
+                    let (__op, __ex) = algae::PerformArg($e).prepare();
+                    let __eff = algae::Effect::new(__op);
                     let __reply_opt = yield __eff;
-                    __reply_opt
-                        .expect("effectful computation resumed without a Reply (the driver called resume(None) mid-computation)")
-                        .take::<_>()
+                    __ex.extract(__reply_opt.expect("effectful computation resumed without a Reply (the driver called resume(None) mid-computation)"))
                 }};
             }
             #[allow(unused_macros)]
@@ -1123,5 +1346,26 @@ mod tests {
         let first_line = &input.lines[0];
         assert_eq!(first_line.family.to_string(), "ROOT");
         assert_eq!(first_line.variant.to_string(), "GetValue");
+    }
+
+    #[test]
+    fn test_to_snake_case() {
+        assert_eq!(to_snake_case("ReadLine"), "read_line");
+        assert_eq!(to_snake_case("Print"), "print");
+        assert_eq!(to_snake_case("IO"), "io");
+        assert_eq!(to_snake_case("HTTPServer"), "http_server");
+        assert_eq!(to_snake_case("GetValue2"), "get_value2");
+        assert_eq!(to_snake_case("Value2Get"), "value2_get");
+        assert_eq!(to_snake_case("already_snake"), "already_snake");
+    }
+
+    #[test]
+    fn test_snake_ident_keyword_becomes_raw() {
+        let ident = Ident::new("Move", proc_macro2::Span::call_site());
+        // `move` is a keyword; the generated ident must be raw (`r#move`).
+        assert_eq!(snake_ident(&ident).to_string(), "r#move");
+
+        let ident = Ident::new("Halt", proc_macro2::Span::call_site());
+        assert_eq!(snake_ident(&ident).to_string(), "halt");
     }
 }
