@@ -1,5 +1,13 @@
 # Algae Ergonomics Investigation
 
+> **Status (2026-08-24):** Wave 1 is implemented — P6 diagnostics
+> (`compile_error!` fallbacks for `perform!`/`call!`,
+> `#[diagnostic::on_unimplemented]` on the handler traits), P3 `&mut` handler
+> blankets + `handler_fn` (note: `&mut` works with the direct run methods, not
+> inside `'static`-boxed `VecHandler` chains), P5 `ScriptHandler`, and P4
+> `Effectful::resume`/`Step` + `call!`. Waves 2–3 (typed perform via witness
+> types, typed handler traits, declaration polish) remain open.
+
 - **Date:** 2026-08-24, at commit `2772de0`
 - **Method:** friction inventory drawn from algae's own source, tests, and
   examples; a prior-art survey of effect-system APIs (effing-mad, reffect,

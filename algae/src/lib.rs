@@ -627,6 +627,19 @@ type EffectCoroutine<R, Op> =
 ///     .run();
 /// assert_eq!(result, 84);
 /// ```
+/// The result of advancing an effectful computation by one step with
+/// [`Effectful::resume`].
+///
+/// This is a stable-shaped mirror of `std::ops::CoroutineState`, so drivers
+/// built on it do not need the unstable `coroutine_trait` feature.
+pub enum Step<R, Op: 'static> {
+    /// The computation performed an effect and is suspended until the effect
+    /// is filled and its [`Reply`] is passed to the next `resume` call.
+    Yielded(Effect<Op>),
+    /// The computation finished with this result.
+    Complete(R),
+}
+
 pub struct Effectful<R, Op: 'static> {
     /// The underlying coroutine representing the effectful computation
     gen: EffectCoroutine<R, Op>,
@@ -776,6 +789,46 @@ impl<R, Op: 'static> Effectful<R, Op> {
         G: Coroutine<Option<Reply>, Return = R, Yield = Effect<Op>> + 'static + Send,
     {
         Self { gen: Box::pin(g) }
+    }
+
+    /// Advances the computation by one step.
+    ///
+    /// Pass `None` on the first call; after a [`Step::Yielded`], fill the
+    /// effect with the handler's reply and pass `Some(reply)` to the next
+    /// call. This is the primitive the built-in drivers (`run_with`,
+    /// `run_checked`) and the `call!` macro are built on; use it directly to
+    /// write custom drivers without the unstable `coroutine_trait` feature.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #![feature(coroutines, yield_expr)]
+    /// # use algae::prelude::*;
+    /// # effect! { Test::GetValue -> i32; }
+    /// # #[effectful]
+    /// # fn computation() -> i32 {
+    /// #     let v: i32 = perform!(Test::GetValue);
+    /// #     v + 1
+    /// # }
+    /// let mut c = computation();
+    /// let mut reply = None;
+    /// let result = loop {
+    ///     match c.resume(reply.take()) {
+    ///         Step::Yielded(mut eff) => {
+    ///             // a hand-rolled "handler": always answer 41
+    ///             eff.fill_boxed(Box::new(41i32));
+    ///             reply = Some(eff.get_reply());
+    ///         }
+    ///         Step::Complete(r) => break r,
+    ///     }
+    /// };
+    /// assert_eq!(result, 42);
+    /// ```
+    pub fn resume(&mut self, reply: Option<Reply>) -> Step<R, Op> {
+        match self.gen.as_mut().resume(reply) {
+            CoroutineState::Yielded(eff) => Step::Yielded(eff),
+            CoroutineState::Complete(r) => Step::Complete(r),
+        }
     }
 
     /// Executes the effectful computation using a single handler.
@@ -1339,6 +1392,11 @@ where
 /// by the effect system. The effect definitions specify what type each operation
 /// should return, and the `perform!` macro will extract that specific type.
 /// If there's a mismatch, the program will panic with a descriptive error.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a total effect handler for `{Op}`",
+    label = "implement `Handler<{Op}>` (or `PartialHandler<{Op}>` and run with `run_checked`)",
+    note = "a total handler must answer every operation: `fn handle(&mut self, op: &{Op}) -> Box<dyn Any + Send>`"
+)]
 pub trait Handler<Op> {
     /// Processes an effect operation and returns the result.
     ///
@@ -1414,6 +1472,11 @@ pub trait Handler<Op> {
 ///     .maybe_handle(&Op::Logger(Logger::Info("hi".to_string())))
 ///     .is_none());
 /// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not a partial effect handler for `{Op}`",
+    label = "implement `PartialHandler<{Op}>` for this type, or wrap a closure with `handler_fn`",
+    note = "a partial handler may decline operations: `fn maybe_handle(&mut self, op: &{Op}) -> Option<Box<dyn Any + Send>>`"
+)]
 pub trait PartialHandler<Op> {
     /// Attempts to process an operation, returning `Some` if handled or `None` if declined.
     ///
@@ -1432,6 +1495,192 @@ pub trait PartialHandler<Op> {
 impl<Op> PartialHandler<Op> for Box<dyn PartialHandler<Op> + Send> {
     fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
         (**self).maybe_handle(op)
+    }
+}
+
+/// A mutable reference to a handler is itself a handler.
+///
+/// This lets tests keep ownership of a handler across a run, so its recorded
+/// state can be inspected afterwards:
+///
+/// ```
+/// # #![feature(coroutines, yield_expr)]
+/// # use algae::prelude::*;
+/// # effect! { Logger::Info (String) -> (); }
+/// # #[effectful]
+/// # fn program() -> i32 {
+/// #     let _: () = perform!(Logger::Info("hello".to_string()));
+/// #     7
+/// # }
+/// struct RecordingHandler {
+///     logs: Vec<String>,
+/// }
+/// impl Handler<Op> for RecordingHandler {
+///     fn handle(&mut self, op: &Op) -> Box<dyn std::any::Any + Send> {
+///         match op {
+///             Op::Logger(Logger::Info(msg)) => {
+///                 self.logs.push(msg.clone());
+///                 Box::new(())
+///             }
+///         }
+///     }
+/// }
+///
+/// let mut handler = RecordingHandler { logs: Vec::new() };
+/// let result = program().run_with(&mut handler);
+/// assert_eq!(result, 7);
+/// assert_eq!(handler.logs, ["hello"]); // handler survives the run
+/// ```
+impl<Op, H: Handler<Op> + ?Sized> Handler<Op> for &mut H {
+    fn handle(&mut self, op: &Op) -> Box<dyn Any + Send> {
+        (**self).handle(op)
+    }
+}
+
+/// A mutable reference to a partial handler is itself a partial handler.
+///
+/// See the [`Handler`] impl for `&mut H` for the motivating post-run
+/// inspection pattern; the same works with `run_checked(&mut handler)`.
+///
+/// Note: `&mut` handlers work with the direct run methods (`run_with`,
+/// `run_checked`), which are generic over the handler type. They cannot be
+/// pushed into a [`VecHandler`] chain, which boxes its handlers and therefore
+/// requires `'static` ownership.
+impl<Op, H: PartialHandler<Op> + ?Sized> PartialHandler<Op> for &mut H {
+    fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+        (**self).maybe_handle(op)
+    }
+}
+
+/// A [`PartialHandler`] backed by a closure, created with [`handler_fn`].
+///
+/// Lets tests and small programs supply an inline handler without defining a
+/// struct and trait impl.
+pub struct HandlerFn<F>(F);
+
+impl<Op, F> PartialHandler<Op> for HandlerFn<F>
+where
+    F: FnMut(&Op) -> Option<Box<dyn Any + Send>>,
+{
+    fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+        (self.0)(op)
+    }
+}
+
+/// Wraps a closure as a [`PartialHandler`].
+///
+/// The closure receives each operation and returns `Some(boxed reply)` to
+/// handle it or `None` to decline:
+///
+/// ```
+/// # #![feature(coroutines, yield_expr)]
+/// # use algae::prelude::*;
+/// # use std::any::Any;
+/// # effect! { Math::Add ((i32, i32)) -> i32; }
+/// # #[effectful]
+/// # fn program() -> i32 { perform!(Math::Add((2, 3))) }
+/// let result = program()
+///     .begin_chain()
+///     .handle(handler_fn(|op: &Op| match op {
+///         Op::Math(Math::Add((a, b))) => Some(Box::new(a + b) as Box<dyn Any + Send>),
+///     }))
+///     .run_checked();
+/// assert_eq!(result.unwrap(), 5);
+/// ```
+pub fn handler_fn<Op, F>(f: F) -> HandlerFn<F>
+where
+    F: FnMut(&Op) -> Option<Box<dyn Any + Send>>,
+{
+    HandlerFn(f)
+}
+
+/// A scripted test handler: replies are served in declaration order.
+///
+/// Each queued reply is consumed exactly once, so the declaration order *is*
+/// the script — no per-test handler struct, no `match`, no `Box::new` at the
+/// call sites. Combined with the `&mut` handler impls, the script can be
+/// inspected after the run:
+///
+/// ```
+/// # #![feature(coroutines, yield_expr)]
+/// # use algae::prelude::*;
+/// # effect! {
+/// #     Console::Print (String) -> ();
+/// #     Console::ReadLine -> String;
+/// # }
+/// # #[effectful]
+/// # fn greet() -> String {
+/// #     let _: () = perform!(Console::Print("name?".to_string()));
+/// #     let name: String = perform!(Console::ReadLine);
+/// #     name
+/// # }
+/// let mut script = ScriptHandler::named("console")
+///     .reply(())                    // answers Console::Print
+///     .reply("Carol".to_string());  // answers Console::ReadLine
+///
+/// let result = greet().run_with(&mut script);
+/// assert_eq!(result, "Carol");
+/// assert_eq!(script.remaining(), 0); // fully consumed
+/// ```
+///
+/// # Panics
+///
+/// Panics when an operation arrives after the script is exhausted, naming the
+/// script, the number of replies served, and the unexpected operation. A reply
+/// of the wrong type panics later, at the `perform!` extraction, like any
+/// other mistyped handler reply.
+pub struct ScriptHandler {
+    name: &'static str,
+    replies: std::collections::VecDeque<Box<dyn Any + Send>>,
+    served: usize,
+}
+
+impl ScriptHandler {
+    /// Creates an empty, unnamed script. Queue replies with [`reply`](Self::reply).
+    pub fn new() -> Self {
+        Self::named("unnamed")
+    }
+
+    /// Creates an empty script whose `name` appears in exhaustion panics.
+    pub fn named(name: &'static str) -> Self {
+        Self {
+            name,
+            replies: std::collections::VecDeque::new(),
+            served: 0,
+        }
+    }
+
+    /// Queues the next reply. Replies are served in the order queued.
+    pub fn reply<T: Any + Send>(mut self, value: T) -> Self {
+        self.replies.push_back(Box::new(value));
+        self
+    }
+
+    /// Number of queued replies not yet served — assert `0` after a run to
+    /// prove the computation performed exactly the scripted effects.
+    pub fn remaining(&self) -> usize {
+        self.replies.len()
+    }
+}
+
+impl Default for ScriptHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<Op: std::fmt::Debug> Handler<Op> for ScriptHandler {
+    fn handle(&mut self, op: &Op) -> Box<dyn Any + Send> {
+        match self.replies.pop_front() {
+            Some(reply) => {
+                self.served += 1;
+                reply
+            }
+            None => panic!(
+                "ScriptHandler `{}` exhausted after {} replies; unexpected operation: {op:?}",
+                self.name, self.served
+            ),
+        }
     }
 }
 
@@ -1864,6 +2113,9 @@ impl<R, Op: 'static + Send> Handled<R, Op, VecHandler<Op>> {
 /// - [`HandlerWrapper`] - Adapts a total [`Handler`] into a [`PartialHandler`]
 /// - [`ReplyError`] - Error returned by [`Reply::try_take`]
 /// - [`register_type`] - Registers a type name for use in reply-mismatch messages
+/// - [`Step`] - One step of a computation, returned by [`Effectful::resume`]
+/// - [`HandlerFn`] / [`handler_fn`] - Closure-backed partial handlers
+/// - [`ScriptHandler`] - Scripted test handler serving canned replies in order
 ///
 /// ## Macros (when "macros" feature is enabled)
 /// - `effect!` - Macro for defining effect families and operations
@@ -1918,12 +2170,13 @@ impl<R, Op: 'static + Send> Handled<R, Op, VecHandler<Op>> {
 /// your effect types and handlers manually using the core types.
 pub mod prelude {
     pub use crate::{
-        register_type, Effect, Effectful, Handler, HandlerWrapper, PartialHandler, Reply,
-        ReplyError, UnhandledOp, UnhandledOpError, VecHandler,
+        handler_fn, register_type, Effect, Effectful, Handler, HandlerFn, HandlerWrapper,
+        PartialHandler, Reply, ReplyError, ScriptHandler, Step, UnhandledOp, UnhandledOpError,
+        VecHandler,
     };
 
     #[cfg(feature = "macros")]
-    pub use algae_macros::{effect, effectful, perform};
+    pub use algae_macros::{call, effect, effectful, perform};
 }
 
 /// Helper macro for combining multiple root enums into one unified enum.
@@ -4112,5 +4365,220 @@ mod tests {
             }
             _ => panic!("Expected WrongType error"),
         }
+    }
+
+    // ========================================================================
+    // Wave-1 ergonomics: &mut handlers, handler_fn, ScriptHandler, resume, call!
+    // ========================================================================
+
+    #[test]
+    fn test_handler_by_mut_ref_is_inspectable_after_run() {
+        let mut handler = LoggingHandler::new();
+        let count = logging_program().run_with(&mut handler);
+
+        assert_eq!(count, 3);
+        // The whole point: the handler survived the run.
+        assert_eq!(handler.get_logs().len(), 3);
+        assert_eq!(
+            handler.get_logs()[0],
+            ("INFO".to_string(), "Starting program".to_string())
+        );
+        assert_eq!(handler.get_logs()[2].0, "ERROR");
+    }
+
+    #[test]
+    fn test_partial_handler_by_mut_ref() {
+        struct CountingMath {
+            calls: usize,
+        }
+        impl PartialHandler<Op> for CountingMath {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Math(Math::Add((a, b))) => {
+                        self.calls += 1;
+                        Some(Box::new(a + b))
+                    }
+                    _ => None,
+                }
+            }
+        }
+
+        #[effectful]
+        fn two_adds() -> i32 {
+            let x: i32 = perform!(Math::Add((1, 2)));
+            perform!(Math::Add((x, 10)))
+        }
+
+        let mut handler = CountingMath { calls: 0 };
+        let result = two_adds().run_checked(&mut handler);
+        assert_eq!(result, Ok(13));
+        assert_eq!(handler.calls, 2);
+    }
+
+    #[test]
+    fn test_handler_fn_closure_in_chain() {
+        #[effectful]
+        fn program() -> i32 {
+            let _: () = perform!(Logger::Info("go".to_string()));
+            perform!(Math::Add((20, 22)))
+        }
+
+        let mut infos = 0usize;
+        let result = program()
+            .begin_chain()
+            .handle(handler_fn(|op: &Op| match op {
+                Op::Logger(Logger::Info(_)) => Some(Box::new(()) as Box<dyn Any + Send>),
+                _ => None,
+            }))
+            .handle(handler_fn(|op: &Op| match op {
+                Op::Math(Math::Add((a, b))) => Some(Box::new(a + b) as Box<dyn Any + Send>),
+                _ => None,
+            }))
+            .run_checked();
+        assert_eq!(result, Ok(42));
+
+        // Closures capture their environment mutably; scoping the handler
+        // ends the borrow so the captured state is readable afterwards.
+        {
+            let mut counting = handler_fn(|op: &Op| match op {
+                Op::Logger(Logger::Info(_)) => {
+                    infos += 1;
+                    Some(Box::new(()) as Box<dyn Any + Send>)
+                }
+                Op::Math(Math::Add((a, b))) => Some(Box::new(a + b) as Box<dyn Any + Send>),
+                _ => None,
+            });
+            let result = program().run_checked(&mut counting);
+            assert_eq!(result, Ok(42));
+        }
+        assert_eq!(infos, 1);
+    }
+
+    #[test]
+    fn test_script_handler_serves_replies_in_order() {
+        let mut script = ScriptHandler::named("io")
+            .reply(()) // WriteString
+            .reply("Ada".to_string()) // ReadString
+            .reply(()) // WriteString
+            .reply(36i32); // ReadNumber
+
+        let result = io_program().run_with(&mut script);
+        assert_eq!(result, "Ada is 36 years old");
+        assert_eq!(script.remaining(), 0);
+    }
+
+    #[test]
+    fn test_script_handler_exhaustion_names_script_and_op() {
+        let result = std::panic::catch_unwind(|| {
+            // Only one reply queued for a program that performs four effects.
+            io_program().run_with(ScriptHandler::named("short-script").reply(()))
+        });
+        let err = result.unwrap_err();
+        let msg = err
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| err.downcast_ref::<&str>().map(|s| s.to_string()))
+            .unwrap_or_default();
+        assert!(
+            msg.contains("short-script"),
+            "panic should name the script: {msg}"
+        );
+        assert!(
+            msg.contains("after 1 replies"),
+            "panic should count served replies: {msg}"
+        );
+        assert!(
+            msg.contains("ReadString"),
+            "panic should show the unexpected op: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_resume_manual_driver() {
+        #[effectful]
+        fn doubler() -> i32 {
+            let v: i32 = perform!(Test::GetValue);
+            v * 2
+        }
+
+        let mut c = doubler();
+        let mut reply = None;
+        let result = loop {
+            match c.resume(reply.take()) {
+                Step::Yielded(mut eff) => {
+                    assert!(matches!(eff.op, Op::Test(Test::GetValue)));
+                    eff.fill_boxed(Box::new(21i32));
+                    reply = Some(eff.get_reply());
+                }
+                Step::Complete(r) => break r,
+            }
+        };
+        assert_eq!(result, 42);
+    }
+
+    #[test]
+    fn test_call_delegates_effects_to_callers_handler() {
+        #[effectful]
+        fn subtask() -> i32 {
+            let _: () = perform!(Logger::Info("sub starting".to_string()));
+            perform!(Math::Add((2, 3)))
+        }
+
+        #[effectful]
+        fn main_task() -> i32 {
+            let _: () = perform!(Logger::Info("main starting".to_string()));
+            let n: i32 = call!(subtask());
+            let m: i32 = call!(subtask());
+            n + m
+        }
+
+        // One handler serves both the caller's and the callees' effects, in
+        // program order; &mut keeps the log inspectable afterwards.
+        struct SubHandler {
+            logs: Vec<String>,
+        }
+        impl PartialHandler<Op> for SubHandler {
+            fn maybe_handle(&mut self, op: &Op) -> Option<Box<dyn Any + Send>> {
+                match op {
+                    Op::Logger(Logger::Info(msg)) => {
+                        self.logs.push(msg.clone());
+                        Some(Box::new(()))
+                    }
+                    Op::Math(Math::Add((a, b))) => Some(Box::new(a + b)),
+                    _ => None,
+                }
+            }
+        }
+
+        let mut handler = SubHandler { logs: Vec::new() };
+        let result = main_task().run_checked(&mut handler);
+        assert_eq!(result, Ok(10));
+        assert_eq!(
+            handler.logs,
+            ["main starting", "sub starting", "sub starting"]
+        );
+    }
+
+    #[test]
+    fn test_call_nests() {
+        #[effectful]
+        fn leaf() -> i32 {
+            perform!(Math::Add((1, 1)))
+        }
+
+        #[effectful]
+        fn middle() -> i32 {
+            let a: i32 = call!(leaf());
+            a + 10
+        }
+
+        #[effectful]
+        fn top() -> i32 {
+            let b: i32 = call!(middle());
+            b * 2
+        }
+
+        let result = top().run_with(MathHandler);
+        assert_eq!(result, 24); // ((1+1) + 10) * 2
     }
 }

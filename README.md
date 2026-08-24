@@ -198,6 +198,52 @@ impl PartialHandler<Op> for MathHandler {
 }
 ```
 
+For inline handlers, `handler_fn(|op| ...)` wraps a closure as a
+`PartialHandler` with no struct required.
+
+### Testing helpers
+
+A `&mut` reference to a handler is itself a handler, so tests can keep
+ownership of a mock and inspect it after the run:
+
+```rust
+let mut mock = RecordingHandler::new();
+let result = program().run_with(&mut mock);
+assert_eq!(mock.logs, ["started", "finished"]);
+```
+
+For tests where the answers are just canned values, `ScriptHandler` serves
+replies in declaration order — no handler struct, no `match`:
+
+```rust
+let mut script = ScriptHandler::named("console")
+    .reply(())                    // answers Console::Print
+    .reply("Carol".to_string());  // answers Console::ReadLine
+
+let result = greet_user().run_with(&mut script);
+assert_eq!(script.remaining(), 0);
+```
+
+An operation arriving after the script is exhausted panics with the script's
+name, the number of replies served, and the unexpected operation.
+
+### Calling effectful functions from effectful functions
+
+`call!` runs a sub-computation and transparently forwards its effects to the
+caller's handler:
+
+```rust
+#[effectful]
+fn main_task() -> i32 {
+    let _: () = perform!(Logger::Info("starting".to_string()));
+    let n: i32 = call!(subtask());  // subtask's effects reach the same handler
+    n * 10
+}
+```
+
+Both `perform!` and `call!` are only usable inside `#[effectful]` functions;
+using them elsewhere is a single clear compile error.
+
 ## Multiple effect families
 
 One `effect!` block can declare several families; they all land in the same
@@ -280,7 +326,10 @@ restricted to one-shot continuations:
 
 Because continuations are never captured, operations that require resuming a
 continuation more than once (non-deterministic choice, backtracking search,
-generators) cannot be expressed. Sequencing is available as `Effectful::bind`.
+generators) cannot be expressed. Effectful functions compose with
+`call!(sub())`, which forwards the sub-computation's effects to the caller's
+handler; `Effectful::bind` sequences whole computations from outside, and
+`Effectful::resume` exposes single steps for custom drivers.
 
 [`tests/algebraic_laws.rs`](algae/tests/algebraic_laws.rs) verifies identity,
 associativity, homomorphism, and commutativity properties of the implementation,

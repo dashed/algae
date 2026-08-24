@@ -1,0 +1,7 @@
+error: perform! can only be used inside an #[effectful] function (the attribute defines the real macro; this fallback exists to give you this message instead of a wall of coroutine errors)
+  --> tests/ui/perform_outside_effectful.rs:11:5
+   |
+11 |     perform!(Test::GetValue)
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this error originates in the macro `perform` (in Nightly builds, run with -Z macro-backtrace for more info)
